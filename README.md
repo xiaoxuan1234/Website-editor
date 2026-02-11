@@ -1,2 +1,2 @@
-# Vue 3 + TypeScript + Vite
-网站编辑器
+# 项目名：网站编辑器
+Vue 3 + TypeScript + Vite
