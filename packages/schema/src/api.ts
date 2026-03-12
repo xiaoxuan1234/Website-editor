@@ -1,0 +1,103 @@
+﻿import { z } from "zod";
+import { PageDocumentV2Schema } from "./editor";
+
+export const UserSchema = z.object({
+  id: z.string(),
+  username: z.string(),
+});
+
+export type User = z.infer<typeof UserSchema>;
+
+export const AuthLoginRequestSchema = z.object({
+  username: z.string().min(1),
+  password: z.string().min(1),
+});
+
+export const AuthLoginResponseSchema = z.object({
+  accessToken: z.string(),
+  refreshToken: z.string(),
+  user: UserSchema,
+});
+
+export const AuthRefreshRequestSchema = z.object({
+  refreshToken: z.string(),
+});
+
+export const AuthRefreshResponseSchema = z.object({
+  accessToken: z.string(),
+  refreshToken: z.string(),
+});
+
+export const ProjectSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  userId: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const CreateProjectRequestSchema = z.object({
+  name: z.string().min(1),
+});
+
+export const PageSummarySchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  title: z.string(),
+  status: z.enum(["draft", "published"]),
+  version: z.number().int().positive(),
+  updatedAt: z.string(),
+});
+
+export const CreatePageRequestSchema = z.object({
+  title: z.string().min(1),
+});
+
+export const SaveDraftRequestSchema = z.object({
+  document: PageDocumentV2Schema,
+});
+
+export const PublishPageResponseSchema = z.object({
+  pageId: z.string(),
+  versionId: z.string(),
+  slug: z.string(),
+  previewUrl: z.string(),
+});
+
+export const AIContentGenerateRequestSchema = z.object({
+  projectId: z.string(),
+  pageId: z.string(),
+  targetNodeId: z.string(),
+  instruction: z.string().min(1),
+  tone: z.string().optional(),
+  length: z.string().optional(),
+  language: z.string().optional(),
+  keywords: z.array(z.string()).optional(),
+  pageTitle: z.string().optional(),
+  currentProps: z.record(z.string(), z.any()),
+  nodeType: z.string(),
+});
+
+export const AIContentGenerateResponseSchema = z.object({
+  targetNodeId: z.string(),
+  proposedProps: z.record(z.string(), z.any()),
+  reasoningSummary: z.string(),
+  safetyFlags: z.array(z.string()),
+});
+
+export const PreviewCreateRequestSchema = z.object({
+  pageId: z.string(),
+});
+
+export const PreviewDocumentResponseSchema = z.object({
+  pageId: z.string(),
+  versionId: z.string(),
+  document: PageDocumentV2Schema,
+});
+
+export type AuthLoginRequest = z.infer<typeof AuthLoginRequestSchema>;
+export type AuthLoginResponse = z.infer<typeof AuthLoginResponseSchema>;
+export type Project = z.infer<typeof ProjectSchema>;
+export type PageSummary = z.infer<typeof PageSummarySchema>;
+export type AIContentGenerateRequest = z.infer<typeof AIContentGenerateRequestSchema>;
+export type AIContentGenerateResponse = z.infer<typeof AIContentGenerateResponseSchema>;
