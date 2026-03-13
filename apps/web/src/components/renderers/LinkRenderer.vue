@@ -6,7 +6,7 @@
     :target="editable ? undefined : linkTarget"
     :rel="editable ? undefined : linkRel"
     :title="linkTitle || undefined"
-    @click.prevent.stop="handleClick"
+    @click="handleClick"
   >
     <span
       ref="editableRef"
@@ -83,11 +83,13 @@ const handleEnter = () => {
   editableRef.value?.blur();
 };
 
-const handleClick = () => {
+const handleClick = (event: MouseEvent) => {
   if (!editable.value) {
     return;
   }
 
+  event.preventDefault();
+  event.stopPropagation();
   handleSelect();
   if (document.activeElement !== editableRef.value) {
     editableRef.value?.focus();

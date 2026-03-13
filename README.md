@@ -84,7 +84,7 @@ pnpm test:e2e
 - `GET /pages/:id`
 - `PUT /pages/:id/draft`
 - `POST /pages/:id/publish`
-- `GET /pages/:id/export-json`
+- `GET /pages/:id/export-zip`
 - `POST /preview`
 - `GET /preview/:slug`
-- `POST /ai/content/generate`
+- `POST /ai/page/generate`

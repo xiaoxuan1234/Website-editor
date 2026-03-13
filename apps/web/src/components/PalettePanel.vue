@@ -128,48 +128,35 @@
 
         <template v-else-if="active === 'ai'">
           <div class="ai-chat-panel">
-            <div class="ai-chat-sub">选中文本类元素后，输入需求即可生成文案草案</div>
+            <section class="ai-section">
+              <div class="ai-section-title">AI整页生成</div>
+              <div class="ai-chat-sub">根据需求生成完整页面结构，并直接替换当前页面。</div>
 
-            <el-input
-              v-model="aiInstruction"
-              type="textarea"
-              :rows="5"
-              placeholder="例如：把这段介绍改成更口语、更有说服力"
-              :disabled="previewMode"
-            />
+              <el-input
+                v-model="aiPageInstruction"
+                type="textarea"
+                :rows="4"
+                placeholder="例如：生成一个面向考研用户的课程推广页，主色蓝白，强调限时优惠。"
+                :disabled="previewMode"
+              />
 
-            <div class="ai-chat-actions">
-              <el-button
-                type="primary"
-                :loading="aiLoading"
-                :disabled="previewMode || !aiSupported || !aiInstruction.trim()"
-                @click="askAI"
-              >
-                发送
-              </el-button>
-              <el-button
-                :disabled="previewMode || !editorStore.aiDraft"
-                @click="editorStore.applyAIDraft()"
-              >
-                应用草案
-              </el-button>
-              <el-button
-                :disabled="previewMode || !editorStore.aiDraft"
-                @click="editorStore.rejectAIDraft()"
-              >
-                清空
-              </el-button>
-            </div>
+              <div class="ai-chat-actions">
+                <el-button
+                  type="primary"
+                  :loading="editorStore.aiPageGenerating"
+                  :disabled="previewMode || !aiPageInstruction.trim()"
+                  @click="generateAIPage"
+                >
+                  生成整页
+                </el-button>
+              </div>
 
-            <div v-if="!aiSupported" class="hint">
-              请先在画布中选中文本、标题、段落、按钮或超链接元素。
-            </div>
-            <div v-if="editorStore.aiError" class="error">{{ editorStore.aiError }}</div>
-
-            <div v-if="editorStore.aiDraft" class="ai-draft">
-              <div class="ai-draft-title">AI 回复</div>
-              <div class="ai-draft-summary">{{ editorStore.aiDraft.reasoningSummary }}</div>
-            </div>
+              <div v-if="editorStore.aiPageSummary" class="ai-draft">
+                <div class="ai-draft-title">生成说明</div>
+                <div class="ai-draft-summary">{{ editorStore.aiPageSummary }}</div>
+              </div>
+              <div v-if="editorStore.aiPageError" class="error">{{ editorStore.aiPageError }}</div>
+            </section>
           </div>
         </template>
 
@@ -182,8 +169,9 @@
 <script setup lang="ts">
 import { computed, ref, type Component } from "vue";
 import { ChatDotRound, Files, Plus, Search } from "@element-plus/icons-vue";
+import { ElMessage } from "element-plus";
 import type { EditorNode, NodeType, PaletteElement } from "@wg/schema";
-import { isTextLikeType, paletteElements } from "@/lib/nodes";
+import { paletteElements } from "@/lib/nodes";
 import { useEditorStore } from "@/stores/editor";
 
 defineProps<{ previewMode: boolean }>();
@@ -196,10 +184,20 @@ const modules: Array<{ key: string; label: string; icon: Component }> = [
 
 const active = ref("elements");
 const keyword = ref("");
-const aiInstruction = ref("");
-const aiLoading = ref(false);
+const aiPageInstruction = ref("");
 const collapsedLayers = ref<Set<string>>(new Set());
 const editorStore = useEditorStore();
+
+const generateAIPage = async () => {
+  const success = await editorStore.generateAIPage({
+    instruction: aiPageInstruction.value.trim(),
+  });
+  if (success) {
+    ElMessage.success("整页草案已生成并替换");
+  } else {
+    ElMessage.error(editorStore.aiPageError || "整页生成失败");
+  }
+};
 
 type LayerItem = {
   id: string;
@@ -266,11 +264,6 @@ const filteredElements = computed(() => {
 const activeModuleLabel = computed(
   () => modules.find((item) => item.key === active.value)?.label ?? ""
 );
-
-const aiSupported = computed(() => {
-  const node = editorStore.selectedNode;
-  return Boolean(node && isTextLikeType(node.type));
-});
 
 const isCollapsed = (id: string) => collapsedLayers.value.has(id);
 
@@ -419,70 +412,49 @@ const resolveRowDropTarget = (
   };
 };
 
-const moveLayer = (item: LayerItem, direction: -1 | 1) => {
-  const targetIndex = item.index + direction;
+const moveLayer = (item: LayerItem, offset: -1 | 1) => {
+  const targetIndex = item.index + offset;
   if (targetIndex < 0 || targetIndex >= item.siblingCount) {
     return;
   }
-
   editorStore.moveNode(item.id, item.parentId, targetIndex);
   editorStore.selectNode(item.id);
 };
 
 const onLayerDragStart = (event: DragEvent, item: LayerItem) => {
-  if (editorStore.previewMode || !event.dataTransfer) {
+  if (!event.dataTransfer) {
     return;
   }
 
   const payload = JSON.stringify({ nodeId: item.id });
+  draggingLayerNodeId.value = item.id;
+  layerDropTarget.value = null;
   event.dataTransfer.effectAllowed = "move";
   event.dataTransfer.setData("application/x-edit-node", payload);
   event.dataTransfer.setData("text/plain", payload);
-  draggingLayerNodeId.value = item.id;
-  layerDropTarget.value = null;
 };
 
 const onLayerDragOver = (event: DragEvent, item: LayerItem) => {
-  if (editorStore.previewMode) {
-    return;
-  }
-
   const payloadNodeId = parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
-  if (!payloadNodeId) {
-    return;
-  }
-
-  if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = "move";
-  }
-
-  const nextTarget = resolveRowDropTarget(event, item);
-  if (!nextTarget) {
-    return;
-  }
-
-  if (isInvalidMoveTarget(payloadNodeId, nextTarget.parentId, nextTarget.index)) {
+  if (!payloadNodeId || payloadNodeId === item.id) {
     layerDropTarget.value = null;
     return;
   }
 
-  layerDropTarget.value = nextTarget;
+  const target = resolveRowDropTarget(event, item);
+  if (!target || isInvalidMoveTarget(payloadNodeId, target.parentId, target.index)) {
+    layerDropTarget.value = null;
+    return;
+  }
+
+  event.dataTransfer!.dropEffect = "move";
+  layerDropTarget.value = target;
 };
 
 const onLayerDrop = (event: DragEvent, item: LayerItem) => {
-  if (editorStore.previewMode) {
-    clearLayerDrag();
-    return;
-  }
-
   const payloadNodeId = parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
-  if (!payloadNodeId) {
-    clearLayerDrag();
-    return;
-  }
-
-  const nextTarget = resolveRowDropTarget(event, item);
-  if (!nextTarget || isInvalidMoveTarget(payloadNodeId, nextTarget.parentId, nextTarget.index)) {
+  const target = resolveRowDropTarget(event, item);
+  if (!payloadNodeId || !target) {
     clearLayerDrag();
     return;
   }
@@ -493,52 +465,46 @@ const onLayerDrop = (event: DragEvent, item: LayerItem) => {
     return;
   }
 
-  const targetIndex = normalizeMoveIndex(source, nextTarget.parentId, nextTarget.index);
-  if (source.parentId === nextTarget.parentId && source.index === targetIndex) {
+  const targetIndex = normalizeMoveIndex(source, target.parentId, target.index);
+  if (source.parentId === target.parentId && source.index === targetIndex) {
     clearLayerDrag();
     return;
   }
 
-  editorStore.moveNode(payloadNodeId, nextTarget.parentId, targetIndex);
+  editorStore.moveNode(payloadNodeId, target.parentId, targetIndex);
   editorStore.selectNode(payloadNodeId);
   clearLayerDrag();
 };
 
 const onLayerTailDragOver = (event: DragEvent) => {
-  if (editorStore.previewMode) {
-    return;
-  }
-
   const payloadNodeId = parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
   if (!payloadNodeId) {
+    layerDropTarget.value = null;
     return;
   }
 
-  if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = "move";
+  const source = findNodeLocation(editorStore.doc.root, payloadNodeId);
+  if (!source) {
+    layerDropTarget.value = null;
+    return;
   }
 
-  const nextTarget: LayerDropTarget = {
+  const targetIndex = normalizeMoveIndex(source, null, editorStore.doc.root.length);
+  if (source.parentId === null && source.index === targetIndex) {
+    layerDropTarget.value = null;
+    return;
+  }
+
+  event.dataTransfer!.dropEffect = "move";
+  layerDropTarget.value = {
     anchorId: tailAnchorId,
     parentId: null,
     index: editorStore.doc.root.length,
     placement: "after",
   };
-
-  if (isInvalidMoveTarget(payloadNodeId, nextTarget.parentId, nextTarget.index)) {
-    layerDropTarget.value = null;
-    return;
-  }
-
-  layerDropTarget.value = nextTarget;
 };
 
 const onLayerTailDrop = (event: DragEvent) => {
-  if (editorStore.previewMode) {
-    clearLayerDrag();
-    return;
-  }
-
   const payloadNodeId = parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
   if (!payloadNodeId) {
     clearLayerDrag();
@@ -577,22 +543,7 @@ const onDragStart = (event: DragEvent, item: PaletteElement) => {
   event.dataTransfer.setData("text/plain", payload);
 };
 
-const askAI = async () => {
-  if (!aiSupported.value || !aiInstruction.value.trim()) {
-    return;
-  }
-
-  aiLoading.value = true;
-  try {
-    await editorStore.generateAIDraft({
-      instruction: aiInstruction.value.trim(),
-    });
-  } finally {
-    aiLoading.value = false;
-  }
-};
 </script>
-
 <style scoped>
 .wg-palette {
   --vv-bg: #eceff3;
@@ -762,6 +713,22 @@ const askAI = async () => {
   gap: 10px;
 }
 
+.ai-section {
+  border: 1px solid #d6dde8;
+  border-radius: 10px;
+  background: #f8fafd;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ai-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #3d4c67;
+}
+
 .ai-chat-sub {
   font-size: 12px;
   color: #6d788f;
@@ -769,16 +736,12 @@ const askAI = async () => {
 
 .ai-chat-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .ai-chat-actions :deep(.el-button) {
   border-radius: 8px;
-}
-
-.hint {
-  color: #66738c;
-  font-size: 12px;
 }
 
 .error {
