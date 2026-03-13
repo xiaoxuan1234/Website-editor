@@ -3,13 +3,13 @@
     ref="inputRef"
     class="input"
     :class="{ editable: editable && !inputDisabled, disabled: inputDisabled }"
-    :readonly="!editable || inputDisabled"
+    :readonly="!canType"
     :disabled="inputDisabled"
     :type="inputType"
     :name="inputName || undefined"
     :required="inputRequired"
     :maxlength="inputMaxLength || undefined"
-    :value="editable ? draftValue : previewValue"
+    :value="editable ? draftValue : liveValue"
     :placeholder="editable ? '' : placeholder"
     @click.stop="handleClick"
     @focus="handleFocus"
@@ -30,6 +30,7 @@ const editorStore = useEditorStore();
 const route = useRoute();
 const inputRef = ref<HTMLInputElement | null>(null);
 const draftValue = ref("");
+const liveValue = ref("");
 
 const placeholder = computed(() => (props.node.props.placeholder as string) || "请输入内容");
 const inputType = computed(() => {
@@ -49,7 +50,9 @@ const inputMaxLength = computed(() => {
   return Math.floor(value);
 });
 const previewValue = computed(() => String(props.node.props.value ?? ""));
-const editable = computed(() => !editorStore.previewMode && !route.path.startsWith("/preview/"));
+const isStandalonePreview = computed(() => route.path.startsWith("/preview/"));
+const editable = computed(() => !editorStore.previewMode && !isStandalonePreview.value);
+const canType = computed(() => !inputDisabled.value && (editable.value || isStandalonePreview.value));
 
 const syncDraft = (value: string) => {
   draftValue.value = value;
@@ -88,7 +91,11 @@ const handleFocus = () => {
 
 const handleInput = (event: Event) => {
   const target = event.target as HTMLInputElement;
-  draftValue.value = target.value;
+  if (editable.value) {
+    draftValue.value = target.value;
+    return;
+  }
+  liveValue.value = target.value;
 };
 
 const handleBlur = () => {
@@ -99,6 +106,17 @@ watch(
   placeholder,
   (value) => {
     syncDraft(value);
+  },
+  { immediate: true }
+);
+
+watch(
+  previewValue,
+  (value) => {
+    const host = inputRef.value;
+    if (!host || document.activeElement !== host) {
+      liveValue.value = value;
+    }
   },
   { immediate: true }
 );

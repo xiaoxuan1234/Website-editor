@@ -1,13 +1,34 @@
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
+import JSZip from "jszip";
 import {
   CreatePageRequestSchema,
   PageDocumentV2Schema,
   SaveDraftRequestSchema,
 } from "@wg/schema";
 import { pageVersions, pages, previewTokens } from "../db/schema";
+import { buildHtmlExportBundle } from "../export/bundle";
 import { createId, createInitialDocument, nowISO, parseDocument } from "../utils";
 import { ensurePageOwnership, ensureProjectOwnership, parseBody } from "./helpers";
+
+const sanitizeFileName = (value: string): string => {
+  const cleaned = value
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || "page";
+};
+
+const buildContentDisposition = (fileName: string): string => {
+  const asciiFallback =
+    fileName
+      .replace(/[^\x20-\x7e]/g, "")
+      .replace(/"/g, "")
+      .trim() || "page-export.zip";
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(
+    fileName
+  )}`;
+};
 
 export const registerPageRoutes = async (app: FastifyInstance) => {
   app.post(
@@ -212,6 +233,48 @@ export const registerPageRoutes = async (app: FastifyInstance) => {
         slug,
         previewUrl: `${app.services.previewBaseUrl}/preview/${slug}`,
       };
+    }
+  );
+
+  app.get(
+    "/pages/:id/export-zip",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const ownership = await ensurePageOwnership(request, id);
+      if (!ownership) {
+        return reply.code(404).send({ message: "Page not found" });
+      }
+
+      const page = await app.services.db.db
+        .select({ draftJson: pages.draftJson, title: pages.title })
+        .from(pages)
+        .where(eq(pages.id, id))
+        .get();
+
+      if (!page) {
+        return reply.code(404).send({ message: "Page not found" });
+      }
+
+      const document = parseDocument(page.draftJson);
+      const bundle = buildHtmlExportBundle(document);
+      const zip = new JSZip();
+      zip.file("index.html", bundle.indexHtml);
+      zip.file("css/style.css", bundle.styleCss);
+
+      const zipBuffer = await zip.generateAsync({
+        type: "nodebuffer",
+        compression: "DEFLATE",
+        compressionOptions: { level: 9 },
+      });
+
+      const fileName = `${sanitizeFileName(page.title || "page")}.zip`;
+      reply
+        .header("Content-Type", "application/zip")
+        .header("Content-Disposition", buildContentDisposition(fileName))
+        .header("Cache-Control", "no-store");
+
+      return reply.send(zipBuffer);
     }
   );
 

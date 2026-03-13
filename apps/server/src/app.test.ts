@@ -1,5 +1,6 @@
 ﻿import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import type { FastifyInstance } from "fastify";
+import JSZip from "jszip";
 import { createServer } from "./app";
 
 let app: FastifyInstance;
@@ -152,6 +153,54 @@ describe("server basic flow", () => {
     expect(getPreview.statusCode).toBe(200);
     const previewPayload = getPreview.json() as { document: { title: string } };
     expect(previewPayload.document.title).toBe(draftTitle);
+  });
+
+  test("export zip should contain html and css files", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: `/pages/${pageId}/export-zip`,
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toContain("application/zip");
+    expect(response.headers["content-disposition"]).toContain(".zip");
+
+    const zip = await JSZip.loadAsync(response.rawPayload);
+    const indexFile = zip.file("index.html");
+    const styleFile = zip.file("css/style.css");
+    expect(indexFile).toBeTruthy();
+    expect(styleFile).toBeTruthy();
+
+    const indexHtml = await indexFile!.async("string");
+    expect(indexHtml).toContain('<link rel="stylesheet" href="./css/style.css" />');
+  });
+
+  test("ai page generate should return full document", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/ai/page/generate",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+      payload: {
+        projectId,
+        pageId,
+        instruction: "生成一个课程招生介绍页，强调品牌实力和咨询转化",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const payload = response.json() as {
+      document: { id: string; projectId: string; root: unknown[]; title: string };
+      reasoningSummary: string;
+    };
+    expect(payload.document.id).toBe(pageId);
+    expect(payload.document.projectId).toBe(projectId);
+    expect(payload.document.root.length).toBeGreaterThan(0);
+    expect(payload.reasoningSummary).toBeTruthy();
   });
 
   test("save draft invalid body should return structured error", async () => {

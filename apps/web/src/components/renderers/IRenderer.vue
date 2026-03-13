@@ -40,14 +40,18 @@ const handleSelect = () => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 20px;
-  min-height: 20px;
+  min-width: 0;
+  min-height: 0;
+  font-size: inherit;
+  line-height: 1;
 }
 
 .i-node {
   display: inline-block;
   color: inherit;
-  font-size: 18px;
+  width: 1em;
+  height: 1em;
+  font-size: inherit;
   line-height: 1;
 }
 
@@ -55,8 +59,8 @@ const handleSelect = () => {
   display: block;
   width: 1em;
   height: 1em;
-  min-width: 18px;
-  min-height: 18px;
+  min-width: 0;
+  min-height: 0;
   object-fit: contain;
 }
 

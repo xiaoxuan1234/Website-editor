@@ -3,7 +3,7 @@
     <img v-if="src" class="image" :src="src" :alt="alt" :loading="loadingMode" :style="imageStyle" />
     <div v-else class="placeholder">
       <div class="placeholder-mark">图片</div>
-      <div class="placeholder-text">点击上传替换图片</div>
+      <div class="placeholder-text">{{ editable ? "点击上传替换图片" : "暂无图片" }}</div>
     </div>
 
     <input ref="fileRef" class="file-input" type="file" accept="image/*" @change="onFileChange" />
@@ -108,7 +108,7 @@ const onFileChange = (event: Event) => {
   min-width: 0;
   max-width: 100%;
   min-height: 0;
-  border: 1px solid #cad4e3;
+  border: 1px solid transparent;
   border-radius: inherit;
   overflow: hidden;
   background: transparent;

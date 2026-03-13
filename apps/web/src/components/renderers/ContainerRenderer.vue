@@ -10,7 +10,7 @@
 .container {
   width: 100%;
   min-height: 0;
-  border: 1px dashed #bdc9de;
+  border: 1px solid transparent;
   border-radius: inherit;
   background: transparent;
   padding: 0;

@@ -438,15 +438,9 @@
                   <label>默认值</label>
                   <el-input v-model="propsDraft.inputValue" :disabled="preview" placeholder="预览时展示的默认值" />
                 </div>
-                <div class="field-grid cols-2">
-                  <div class="field">
-                    <label>字段名</label>
-                    <el-input v-model="propsDraft.inputName" :disabled="preview" placeholder="例如 username" />
-                  </div>
-                  <div class="field">
-                    <label>最大长度</label>
-                    <el-input-number v-model="propsDraft.inputMaxLength" :disabled="preview" :min="0" :max="9999" />
-                  </div>
+                <div class="field">
+                  <label>最大长度</label>
+                  <el-input-number v-model="propsDraft.inputMaxLength" :disabled="preview" :min="0" :max="9999" />
                 </div>
                 <div class="field">
                   <label>是否必填</label>
@@ -1036,28 +1030,18 @@
               <el-icon :class="{ folded: !isSectionOpen('effectsShadowMain') }"><ArrowDown /></el-icon>
             </div>
             <div v-show="isSectionOpen('effectsShadowMain')" class="field">
-              <label>阴影</label>
-              <el-input
-                v-model="styleDraft.boxShadow"
-                :disabled="preview"
-                placeholder="例如 0 8px 20px rgba(0,0,0,.15)"
-              />
+              <label>阴影预设</label>
+              <el-select v-model="styleDraft.boxShadow" :disabled="preview">
+                <el-option
+                  v-for="item in shadowPresetOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </el-select>
             </div>
           </section>
 
-          <section v-if="activeTab === 'effects'" class="vv-card">
-            <div class="section-head clickable" @click="toggleSection('effectsBackgroundMain')">
-              <span>背景</span>
-              <el-icon :class="{ folded: !isSectionOpen('effectsBackgroundMain') }"><ArrowDown /></el-icon>
-            </div>
-            <div v-show="isSectionOpen('effectsBackgroundMain')" class="field">
-              <label>背景色</label>
-              <div class="color-line">
-                <el-input v-model="styleDraft.backgroundColor" :disabled="preview" placeholder="例如 #f7f9ff / rgba(...)" />
-                <el-color-picker v-model="styleDraft.backgroundColor" :disabled="preview" show-alpha color-format="rgb" />
-              </div>
-            </div>
-          </section>
         </template>
       </div>
     </div>
@@ -1099,7 +1083,6 @@ type SectionKey =
   | "effectsTypographyMain"
   | "effectsTextMain"
   | "effectsShadowMain"
-  | "effectsBackgroundMain"
   | "pageMain";
 const sectionOpen = reactive<Record<SectionKey, boolean>>({
   displayLayoutMain: true,
@@ -1120,7 +1103,6 @@ const sectionOpen = reactive<Record<SectionKey, boolean>>({
   effectsTypographyMain: true,
   effectsTextMain: true,
   effectsShadowMain: true,
-  effectsBackgroundMain: true,
   pageMain: true,
 });
 
@@ -1213,6 +1195,16 @@ const fontStyleOptions = [
   { label: "斜体", value: "italic" },
   { label: "倾斜", value: "oblique" },
 ];
+const shadowPresetOptions = [
+  { label: "无阴影", value: "" },
+  { label: "轻微阴影", value: "0 1px 3px rgba(15, 23, 42, 0.12)" },
+  { label: "中等阴影", value: "0 6px 16px rgba(15, 23, 42, 0.16)" },
+  { label: "强阴影", value: "0 14px 32px rgba(15, 23, 42, 0.22)" },
+  { label: "卡片阴影", value: "0 8px 24px rgba(20, 33, 61, 0.14)" },
+  { label: "悬浮阴影", value: "0 12px 28px rgba(45, 88, 175, 0.2)" },
+  { label: "深色阴影", value: "0 10px 26px rgba(0, 0, 0, 0.28)" },
+];
+const shadowPresetValueSet = new Set(shadowPresetOptions.map((item) => item.value));
 const textDecorationOptions = [
   { label: "默认", value: "" },
   { label: "无", value: "none" },
@@ -1425,7 +1417,6 @@ const propsDraft = reactive({
   placeholder: "",
   inputType: "text",
   inputDisabled: false,
-  inputName: "",
   inputRequired: false,
   inputMaxLength: 0,
   inputValue: "",
@@ -1632,7 +1623,6 @@ const fillDraft = (target: EditorNode | null) => {
     propsDraft.placeholder = "";
     propsDraft.inputType = "text";
     propsDraft.inputDisabled = false;
-    propsDraft.inputName = "";
     propsDraft.inputRequired = false;
     propsDraft.inputMaxLength = 0;
     propsDraft.inputValue = "";
@@ -1685,7 +1675,6 @@ const fillDraft = (target: EditorNode | null) => {
   propsDraft.placeholder = String(target.props.placeholder ?? "");
   propsDraft.inputType = String(target.props.type ?? "text");
   propsDraft.inputDisabled = Boolean(target.props.disabled ?? false);
-  propsDraft.inputName = String(target.props.name ?? "");
   propsDraft.inputRequired = Boolean(target.props.required ?? false);
   propsDraft.inputMaxLength = Math.max(0, Number(target.props.maxLength ?? 0) || 0);
   propsDraft.inputValue = String(target.props.value ?? "");
@@ -1724,6 +1713,9 @@ const fillDraft = (target: EditorNode | null) => {
   styleKeys.forEach((key) => {
     styleDraft[key] = readScopedStyle(target, key);
   });
+  if (!shadowPresetValueSet.has(styleDraft.boxShadow)) {
+    styleDraft.boxShadow = "";
+  }
 
   pageDraft.backgroundColor = String(editorStore.pageStyle.backgroundColor ?? "#ffffff");
   pageDraft.backgroundImage = String(editorStore.pageStyle.backgroundImage ?? "");
@@ -1786,7 +1778,6 @@ const buildPropsPatch = (current: EditorNode): Record<string, unknown> => {
       placeholder: propsDraft.placeholder,
       type: propsDraft.inputType,
       disabled: propsDraft.inputDisabled,
-      name: propsDraft.inputName,
       required: propsDraft.inputRequired,
       maxLength: propsDraft.inputMaxLength > 0 ? Math.floor(propsDraft.inputMaxLength) : null,
       value: propsDraft.inputValue,

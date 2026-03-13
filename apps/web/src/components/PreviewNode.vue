@@ -1,16 +1,16 @@
 <template>
-  <div class="preview-node" :style="nodeInlineStyle">
-    <NodeRenderer v-if="node.type !== 'container'" :node="node" :style="nodeRadiusInlineStyle" />
-
-    <NodeRenderer v-else :node="node" :style="nodeRadiusInlineStyle">
-      <PreviewNode
-        v-for="child in node.children"
-        :key="child.id"
-        :node="child"
-        :device-mode="deviceMode"
-      />
-    </NodeRenderer>
+  <div v-if="node.type !== 'container'" class="preview-node" :style="nodeInlineStyle">
+    <NodeRenderer :node="node" :style="nodeRenderableInlineStyle" />
   </div>
+
+  <NodeRenderer v-else class="preview-node container" :node="node" :style="nodeInlineStyle">
+    <PreviewNode
+      v-for="child in node.children"
+      :key="child.id"
+      :node="child"
+      :device-mode="deviceMode"
+    />
+  </NodeRenderer>
 </template>
 
 <script setup lang="ts">
@@ -27,10 +27,29 @@ const props = defineProps<{ node: EditorNode; deviceMode: DeviceMode }>();
 const nodeInlineStyle = computed(
   () => resolveNodeStyleByDevice(props.node, props.deviceMode) as Record<string, string | number>
 );
-const nodeRadiusInlineStyle = computed<Record<string, string | number>>(() => {
+const nodeRenderableInlineStyle = computed<Record<string, string | number>>(() => {
   const style = nodeInlineStyle.value;
   const next: Record<string, string | number> = {};
   const keys = [
+    "backgroundColor",
+    "color",
+    "fontSize",
+    "fontWeight",
+    "fontFamily",
+    "fontStyle",
+    "lineHeight",
+    "letterSpacing",
+    "textAlign",
+    "verticalAlign",
+    "textDecoration",
+    "textTransform",
+    "whiteSpace",
+    "wordBreak",
+    "borderWidth",
+    "borderStyle",
+    "borderColor",
+    "boxShadow",
+    "cursor",
     "borderRadius",
     "borderTopLeftRadius",
     "borderTopRightRadius",
@@ -49,10 +68,14 @@ const nodeRadiusInlineStyle = computed<Record<string, string | number>>(() => {
 
 <style scoped>
 .preview-node {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
   margin: 0;
 }
 
-.preview-node > :deep(*) {
-  border-radius: inherit;
+.preview-node.container {
+  width: 100%;
 }
 </style>

@@ -59,7 +59,7 @@
           ×
         </button>
       </div>
-      <NodeRenderer :node="node" :style="nodeRadiusInlineStyle" />
+      <NodeRenderer :node="node" :style="nodeRenderableInlineStyle" />
     </div>
 
     <div
@@ -195,10 +195,29 @@ let sizeObserver: ResizeObserver | null = null;
 const nodeInlineStyle = computed(
   () => editorStore.getNodeStyleByMode(props.node) as Record<string, string | number>
 );
-const nodeRadiusInlineStyle = computed<Record<string, string | number>>(() => {
+const nodeRenderableInlineStyle = computed<Record<string, string | number>>(() => {
   const style = nodeInlineStyle.value;
   const next: Record<string, string | number> = {};
   const keys = [
+    "backgroundColor",
+    "color",
+    "fontSize",
+    "fontWeight",
+    "fontFamily",
+    "fontStyle",
+    "lineHeight",
+    "letterSpacing",
+    "textAlign",
+    "verticalAlign",
+    "textDecoration",
+    "textTransform",
+    "whiteSpace",
+    "wordBreak",
+    "borderWidth",
+    "borderStyle",
+    "borderColor",
+    "boxShadow",
+    "cursor",
     "borderRadius",
     "borderTopLeftRadius",
     "borderTopRightRadius",
@@ -462,6 +481,7 @@ onBeforeUnmount(() => {
 
 .node-content > :deep(*) {
   border-radius: inherit;
+  font-style: inherit;
 }
 
 .children-zone {
@@ -521,9 +541,9 @@ onBeforeUnmount(() => {
 
 .node-toolbar {
   position: absolute;
-  top: 0;
+  top: -4px;
   right: 0;
-  transform: translate(0, -50%);
+  transform: translateY(-100%);
   display: inline-flex;
   align-items: center;
   gap: 4px;
