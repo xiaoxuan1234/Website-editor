@@ -1,4 +1,4 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 import { PageDocumentV2Schema } from "./editor";
 
 export const UserSchema = z.object({
@@ -68,6 +68,9 @@ export const AIPageGenerateRequestSchema = z.object({
   projectId: z.string(),
   pageId: z.string(),
   instruction: z.string().min(1),
+  pageType: z.string().optional(),
+  style: z.string().optional(),
+  primaryColor: z.string().optional(),
   tone: z.string().optional(),
   length: z.string().optional(),
   language: z.string().optional(),

@@ -1,5 +1,9 @@
 <template>
-  <div v-if="node.type !== 'container'" class="preview-node" :style="nodeInlineStyle">
+  <div
+    v-if="node.type !== 'container'"
+    class="preview-node"
+    :style="nodeWrapperStyle"
+  >
     <NodeRenderer :node="node" :style="nodeRenderableInlineStyle" />
   </div>
 
@@ -27,6 +31,32 @@ const props = defineProps<{ node: EditorNode; deviceMode: DeviceMode }>();
 const nodeInlineStyle = computed(
   () => resolveNodeStyleByDevice(props.node, props.deviceMode) as Record<string, string | number>
 );
+/** 按钮/输入框的外层不应用 border 相关，避免与组件自身边框叠加成双层 */
+const nodeWrapperStyle = computed<Record<string, string | number>>(() => {
+  const style = nodeInlineStyle.value;
+  if (props.node.type === "button" || props.node.type === "input") {
+    const exclude = new Set([
+      "border",
+      "borderWidth",
+      "borderStyle",
+      "borderColor",
+      "borderRadius",
+      "borderTopLeftRadius",
+      "borderTopRightRadius",
+      "borderBottomRightRadius",
+      "borderBottomLeftRadius",
+      "boxShadow",
+    ]);
+    const next: Record<string, string | number> = {};
+    Object.entries(style).forEach(([k, v]) => {
+      if (!exclude.has(k) && v !== undefined && v !== null && String(v).trim() !== "") {
+        next[k] = v;
+      }
+    });
+    return next;
+  }
+  return style;
+});
 const nodeRenderableInlineStyle = computed<Record<string, string | number>>(() => {
   const style = nodeInlineStyle.value;
   const next: Record<string, string | number> = {};

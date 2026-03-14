@@ -1,4 +1,4 @@
-﻿import { computed, ref } from "vue";
+import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import {
   createAddNodeCommand,
@@ -642,6 +642,9 @@ export const useEditorStore = defineStore("editor", () => {
 
   const generateAIPage = async (payload: {
     instruction: string;
+    pageType?: string;
+    style?: string;
+    primaryColor?: string;
     tone?: string;
     length?: string;
     language?: string;
@@ -658,7 +661,7 @@ export const useEditorStore = defineStore("editor", () => {
 
     const instruction = payload.instruction.trim();
     if (!instruction) {
-      aiPageError.value = "请输入整页生成需求";
+      aiPageError.value = "请输入网页生成需求";
       return false;
     }
 
@@ -669,6 +672,9 @@ export const useEditorStore = defineStore("editor", () => {
           projectId: currentProjectId.value,
           pageId: currentPageId.value,
           instruction,
+          pageType: payload.pageType,
+          style: payload.style,
+          primaryColor: payload.primaryColor,
           tone: payload.tone,
           length: payload.length,
           language: payload.language,
@@ -684,13 +690,13 @@ export const useEditorStore = defineStore("editor", () => {
         updatedAt: new Date().toISOString(),
       };
       selectedNodeId.value = doc.value.root[0]?.id ?? "";
-      aiPageSummary.value = result.reasoningSummary || "AI 已生成整页草案";
+      aiPageSummary.value = result.reasoningSummary || "AI 已生成智能网页";
       resetHistory();
       touchDocument();
       queueAutoSave();
       return true;
     } catch (error) {
-      aiPageError.value = error instanceof Error ? error.message : "整页生成失败";
+      aiPageError.value = error instanceof Error ? error.message : "网页生成失败";
       return false;
     } finally {
       aiPageGenerating.value = false;

@@ -128,7 +128,7 @@ watch(
   min-width: 180px;
   max-width: 100%;
   height: 38px;
-  border: 1px solid #c8d1e2;
+  border: none;
   border-radius: inherit;
   padding: 0 12px;
   box-sizing: border-box;
