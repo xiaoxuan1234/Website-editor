@@ -17,6 +17,7 @@ export const paletteElements: PaletteElement[] = [
   { type: "link", label: "超链接", icon: "icon-chaolianjie" },
   { type: "table", label: "表格", icon: "icon-biaoge" },
   { type: "i", label: "图标", icon: "icon-zujian" },
+  { type: "li", label: "列表项", icon: "icon-duanluo" },
   { type: "ul", label: "无序列表", icon: "icon-liebiao" },
   { type: "ol", label: "有序列表", icon: "icon-liebiao" },
 ];

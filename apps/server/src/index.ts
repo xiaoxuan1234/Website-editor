@@ -1,5 +1,4 @@
-import "dotenv/config";
-import { mkdirSync } from "node:fs";
+﻿import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createServer } from "./app";
 
@@ -22,9 +21,6 @@ const start = async () => {
     openAIApiKey: process.env.OPENAI_API_KEY,
     openAIBaseUrl: process.env.OPENAI_BASE_URL,
     openAIModel: process.env.OPENAI_MODEL,
-    deepseekApiKey: process.env.DEEPSEEK_API_KEY,
-    deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL,
-    deepseekModel: process.env.DEEPSEEK_MODEL,
     bodyLimitBytes,
   });
 

@@ -13,8 +13,7 @@
     "test": "echo \"No tests for @wg/ai-core\""
   },
   "dependencies": {
-    "@wg/schema": "workspace:*",
-    "zod": "^4.3.6"
+    "@wg/schema": "workspace:*"
   },
   "devDependencies": {
     "typescript": "~5.9.3"

@@ -3,13 +3,13 @@
     ref="inputRef"
     class="input"
     :class="{ editable: editable && !inputDisabled, disabled: inputDisabled }"
-    :readonly="!canType"
+    :readonly="!editable || inputDisabled"
     :disabled="inputDisabled"
     :type="inputType"
     :name="inputName || undefined"
     :required="inputRequired"
     :maxlength="inputMaxLength || undefined"
-    :value="editable ? draftValue : liveValue"
+    :value="editable ? draftValue : previewValue"
     :placeholder="editable ? '' : placeholder"
     @click.stop="handleClick"
     @focus="handleFocus"
@@ -30,7 +30,6 @@ const editorStore = useEditorStore();
 const route = useRoute();
 const inputRef = ref<HTMLInputElement | null>(null);
 const draftValue = ref("");
-const liveValue = ref("");
 
 const placeholder = computed(() => (props.node.props.placeholder as string) || "请输入内容");
 const inputType = computed(() => {
@@ -50,9 +49,7 @@ const inputMaxLength = computed(() => {
   return Math.floor(value);
 });
 const previewValue = computed(() => String(props.node.props.value ?? ""));
-const isStandalonePreview = computed(() => route.path.startsWith("/preview/"));
-const editable = computed(() => !editorStore.previewMode && !isStandalonePreview.value);
-const canType = computed(() => !inputDisabled.value && (editable.value || isStandalonePreview.value));
+const editable = computed(() => !editorStore.previewMode && !route.path.startsWith("/preview/"));
 
 const syncDraft = (value: string) => {
   draftValue.value = value;
@@ -91,11 +88,7 @@ const handleFocus = () => {
 
 const handleInput = (event: Event) => {
   const target = event.target as HTMLInputElement;
-  if (editable.value) {
-    draftValue.value = target.value;
-    return;
-  }
-  liveValue.value = target.value;
+  draftValue.value = target.value;
 };
 
 const handleBlur = () => {
@@ -109,17 +102,6 @@ watch(
   },
   { immediate: true }
 );
-
-watch(
-  previewValue,
-  (value) => {
-    const host = inputRef.value;
-    if (!host || document.activeElement !== host) {
-      liveValue.value = value;
-    }
-  },
-  { immediate: true }
-);
 </script>
 
 <style scoped>
@@ -128,7 +110,7 @@ watch(
   min-width: 180px;
   max-width: 100%;
   height: 38px;
-  border: none;
+  border: 1px solid #c8d1e2;
   border-radius: inherit;
   padding: 0 12px;
   box-sizing: border-box;

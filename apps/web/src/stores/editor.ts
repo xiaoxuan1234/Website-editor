@@ -1,4 +1,4 @@
-import { computed, ref } from "vue";
+﻿import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import {
   createAddNodeCommand,
@@ -17,6 +17,7 @@ import {
   type HistoryState,
 } from "@wg/editor-core";
 import type {
+  AIContentGenerateResponse,
   EditorNode,
   NodeType,
   PageDocumentV2,
@@ -24,7 +25,7 @@ import type {
   Project,
 } from "@wg/schema";
 import { apiClient, type AuthTokens } from "@/lib/api";
-import { createNode, createNodeId } from "@/lib/nodes";
+import { createNode, createNodeId, isTextLikeType } from "@/lib/nodes";
 import {
   mergeResponsiveStylePatch,
   resolveNodeStyleByDevice,
@@ -75,9 +76,8 @@ export const useEditorStore = defineStore("editor", () => {
   const saving = ref(false);
   const initialized = ref(false);
   const publishPreviewUrl = ref<string>("");
-  const aiPageSummary = ref<string>("");
-  const aiPageError = ref<string>("");
-  const aiPageGenerating = ref(false);
+  const aiDraft = ref<AIContentGenerateResponse | null>(null);
+  const aiError = ref<string>("");
   const autoSaveError = ref<string>("");
   const lastSavedAt = ref<string>("");
   const localDraftCandidate = ref<LocalDraftEntry | null>(null);
@@ -408,9 +408,6 @@ export const useEditorStore = defineStore("editor", () => {
     currentPageId.value = "";
     doc.value = createEmptyDoc();
     selectedNodeId.value = "";
-    aiPageSummary.value = "";
-    aiPageError.value = "";
-    aiPageGenerating.value = false;
     autoSaveError.value = "";
     lastSavedAt.value = "";
     localDraftCandidate.value = null;
@@ -640,67 +637,74 @@ export const useEditorStore = defineStore("editor", () => {
     queueAutoSave();
   };
 
-  const generateAIPage = async (payload: {
+  const generateAIDraft = async (payload: {
     instruction: string;
-    pageType?: string;
-    style?: string;
-    primaryColor?: string;
     tone?: string;
     length?: string;
     language?: string;
     keywords?: string[];
-  }): Promise<boolean> => {
-    flushPendingEdits();
-    aiPageError.value = "";
-    aiPageSummary.value = "";
+  }) => {
+    aiError.value = "";
+    aiDraft.value = null;
+
+    const node = selectedNode.value;
+    if (!node || !isTextLikeType(node.type)) {
+      aiError.value = "当前选中节点不支持 AI 文案生成";
+      return;
+    }
 
     if (!currentPageId.value || !currentProjectId.value) {
-      aiPageError.value = "页面上下文未初始化";
-      return false;
+      aiError.value = "页面上下文未初始化";
+      return;
     }
 
-    const instruction = payload.instruction.trim();
-    if (!instruction) {
-      aiPageError.value = "请输入网页生成需求";
-      return false;
-    }
-
-    aiPageGenerating.value = true;
     try {
-      const result = await withRefresh((token) =>
-        apiClient.generateAIPage(token, {
+      aiDraft.value = await withRefresh((token) =>
+        apiClient.generateAI(token, {
           projectId: currentProjectId.value,
           pageId: currentPageId.value,
-          instruction,
-          pageType: payload.pageType,
-          style: payload.style,
-          primaryColor: payload.primaryColor,
+          targetNodeId: node.id,
+          instruction: payload.instruction,
           tone: payload.tone,
           length: payload.length,
           language: payload.language,
           keywords: payload.keywords,
+          pageTitle: doc.value.title,
+          currentProps: node.props,
+          nodeType: node.type,
         })
       );
-
-      doc.value = {
-        ...result.document,
-        id: currentPageId.value,
-        projectId: currentProjectId.value,
-        status: "draft",
-        updatedAt: new Date().toISOString(),
-      };
-      selectedNodeId.value = doc.value.root[0]?.id ?? "";
-      aiPageSummary.value = result.reasoningSummary || "AI 已生成智能网页";
-      resetHistory();
-      touchDocument();
-      queueAutoSave();
-      return true;
     } catch (error) {
-      aiPageError.value = error instanceof Error ? error.message : "网页生成失败";
-      return false;
-    } finally {
-      aiPageGenerating.value = false;
+      aiError.value = error instanceof Error ? error.message : "AI 生成失败";
     }
+  };
+
+  const rejectAIDraft = () => {
+    aiDraft.value = null;
+  };
+
+  const applyAIDraft = () => {
+    const draft = aiDraft.value;
+    if (!draft) {
+      return;
+    }
+
+    if (draft.targetNodeId !== selectedNodeId.value) {
+      selectedNodeId.value = draft.targetNodeId;
+    }
+
+    applyCommand(createUpdateNodePropsCommand(draft.targetNodeId, draft.proposedProps));
+
+    const node = findNodeById(doc.value, draft.targetNodeId);
+    if (node) {
+      node.aiMeta = {
+        ...node.aiMeta,
+        lastAppliedAt: new Date().toISOString(),
+        lastPrompt: draft.reasoningSummary,
+      };
+    }
+
+    aiDraft.value = null;
   };
 
   const saveNow = async (): Promise<boolean> => {
@@ -777,7 +781,10 @@ export const useEditorStore = defineStore("editor", () => {
       apiClient.exportJson(token, currentPageId.value)
     );
 
-    const url = URL.createObjectURL(payload.blob);
+    const blob = new Blob([JSON.stringify(payload.document, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = payload.fileName;
@@ -802,9 +809,8 @@ export const useEditorStore = defineStore("editor", () => {
     saving,
     initialized,
     publishPreviewUrl,
-    aiPageSummary,
-    aiPageError,
-    aiPageGenerating,
+    aiDraft,
+    aiError,
     autoSaveError,
     lastSavedAt,
     localDraftCandidate,
@@ -832,7 +838,9 @@ export const useEditorStore = defineStore("editor", () => {
     updatePageStyle,
     undo,
     redo,
-    generateAIPage,
+    generateAIDraft,
+    rejectAIDraft,
+    applyAIDraft,
     saveNow,
     publish,
     createPreview,

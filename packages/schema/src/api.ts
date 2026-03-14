@@ -1,4 +1,4 @@
-import { z } from "zod";
+﻿import { z } from "zod";
 import { PageDocumentV2Schema } from "./editor";
 
 export const UserSchema = z.object({
@@ -64,21 +64,23 @@ export const PublishPageResponseSchema = z.object({
   previewUrl: z.string(),
 });
 
-export const AIPageGenerateRequestSchema = z.object({
+export const AIContentGenerateRequestSchema = z.object({
   projectId: z.string(),
   pageId: z.string(),
+  targetNodeId: z.string(),
   instruction: z.string().min(1),
-  pageType: z.string().optional(),
-  style: z.string().optional(),
-  primaryColor: z.string().optional(),
   tone: z.string().optional(),
   length: z.string().optional(),
   language: z.string().optional(),
   keywords: z.array(z.string()).optional(),
+  pageTitle: z.string().optional(),
+  currentProps: z.record(z.string(), z.any()),
+  nodeType: z.string(),
 });
 
-export const AIPageGenerateResponseSchema = z.object({
-  document: PageDocumentV2Schema,
+export const AIContentGenerateResponseSchema = z.object({
+  targetNodeId: z.string(),
+  proposedProps: z.record(z.string(), z.any()),
   reasoningSummary: z.string(),
   safetyFlags: z.array(z.string()),
 });
@@ -97,5 +99,5 @@ export type AuthLoginRequest = z.infer<typeof AuthLoginRequestSchema>;
 export type AuthLoginResponse = z.infer<typeof AuthLoginResponseSchema>;
 export type Project = z.infer<typeof ProjectSchema>;
 export type PageSummary = z.infer<typeof PageSummarySchema>;
-export type AIPageGenerateRequest = z.infer<typeof AIPageGenerateRequestSchema>;
-export type AIPageGenerateResponse = z.infer<typeof AIPageGenerateResponseSchema>;
+export type AIContentGenerateRequest = z.infer<typeof AIContentGenerateRequestSchema>;
+export type AIContentGenerateResponse = z.infer<typeof AIContentGenerateResponseSchema>;
