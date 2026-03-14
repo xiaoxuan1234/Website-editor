@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <section class="canvas-wrap">
     <div
       ref="canvasRef"
@@ -425,7 +425,7 @@ const onCanvasClick = (event: MouseEvent) => {
 <style scoped>
 .canvas-wrap {
   height: 100%;
-  padding: 22px 22px 110px;
+  padding: 20px 0;
   overflow-y: auto;
   background: #e9edf3;
   box-sizing: border-box;

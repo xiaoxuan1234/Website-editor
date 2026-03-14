@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <aside class="wg-palette">
     <div class="panel-body">
       <nav class="module-nav">
@@ -20,7 +20,12 @@
         <div class="library-title">{{ activeModuleLabel }}</div>
 
         <template v-if="active === 'elements'">
-          <el-input v-model="keyword" class="search" clearable placeholder="搜索组件">
+          <el-input
+            v-model="keyword"
+            class="search"
+            clearable
+            placeholder="搜索组件"
+          >
             <template #prefix>
               <el-icon><Search /></el-icon>
             </template>
@@ -43,11 +48,15 @@
             </div>
           </div>
 
-          <div v-if="filteredElements.length === 0" class="placeholder">未找到匹配组件</div>
+          <div v-if="filteredElements.length === 0" class="placeholder">
+            未找到匹配组件
+          </div>
         </template>
 
         <template v-else-if="active === 'layers'">
-          <div v-if="layerItems.length === 0" class="placeholder">当前没有图层</div>
+          <div v-if="layerItems.length === 0" class="placeholder">
+            当前没有图层
+          </div>
 
           <div v-else class="layer-list">
             <div
@@ -58,9 +67,11 @@
                 active: item.id === editorStore.selectedNodeId,
                 'dragging-source': item.id === draggingLayerNodeId,
                 'drop-before':
-                  layerDropTarget?.anchorId === item.id && layerDropTarget?.placement === 'before',
+                  layerDropTarget?.anchorId === item.id &&
+                  layerDropTarget?.placement === 'before',
                 'drop-after':
-                  layerDropTarget?.anchorId === item.id && layerDropTarget?.placement === 'after',
+                  layerDropTarget?.anchorId === item.id &&
+                  layerDropTarget?.placement === 'after',
               }"
               :style="{ paddingLeft: `${item.depth * 14 + 8}px` }"
               :draggable="!previewMode"
@@ -81,7 +92,10 @@
               </button>
               <span v-else class="layer-toggle placeholder-toggle"></span>
 
-              <i class="iconfont layer-icon" :class="typeIconMap[item.type] || 'icon-danhangwenben'"></i>
+              <i
+                class="iconfont layer-icon"
+                :class="typeIconMap[item.type] || 'icon-danhangwenben'"
+              ></i>
               <span class="layer-name">{{ typeLabelMap[item.type] }}</span>
               <span class="layer-id">{{ item.id.slice(-6) }}</span>
 
@@ -129,16 +143,68 @@
         <template v-else-if="active === 'ai'">
           <div class="ai-chat-panel">
             <section class="ai-section">
-              <div class="ai-section-title">AI整页生成</div>
-              <div class="ai-chat-sub">根据需求生成完整页面结构，并直接替换当前页面。</div>
+              <div class="ai-section-title">AI智能网页生成</div>
+              <div class="ai-chat-sub">
+                根据您的需求生成完整的网页结构，支持自定义风格和布局。
+              </div>
 
               <el-input
                 v-model="aiPageInstruction"
                 type="textarea"
                 :rows="4"
-                placeholder="例如：生成一个面向考研用户的课程推广页，主色蓝白，强调限时优惠。"
+                placeholder="详细描述您想要的网页，例如：生成一个科技公司的产品介绍页，现代风格，蓝色主题，包含英雄区、功能介绍和联系表单。"
                 :disabled="previewMode"
               />
+
+              <div class="ai-options-grid">
+                <el-form label-width="80px" size="small">
+                  <el-form-item label="页面类型">
+                    <el-select
+                      v-model="aiPageOptions.pageType"
+                      placeholder="选择页面类型"
+                    >
+                      <el-option label="首页" value="home" />
+                      <el-option label="产品页" value="product" />
+                      <el-option label="服务页" value="service" />
+                      <el-option label="关于我们" value="about" />
+                      <el-option label="联系我们" value="contact" />
+                      <el-option label="博客" value="blog" />
+                      <el-option label="登录/注册" value="auth" />
+                    </el-select>
+                  </el-form-item>
+
+                  <el-form-item label="设计风格">
+                    <el-select
+                      v-model="aiPageOptions.style"
+                      placeholder="选择设计风格"
+                    >
+                      <el-option label="现代简约" value="modern" />
+                      <el-option label="商务专业" value="business" />
+                      <el-option label="创意个性" value="creative" />
+                      <el-option label="科技感" value="tech" />
+                      <el-option label="温暖友好" value="friendly" />
+                    </el-select>
+                  </el-form-item>
+
+                  <el-form-item label="主色调">
+                    <el-color-picker
+                      v-model="aiPageOptions.primaryColor"
+                      show-alpha
+                    />
+                  </el-form-item>
+
+                  <el-form-item label="页面长度">
+                    <el-select
+                      v-model="aiPageOptions.length"
+                      placeholder="选择页面长度"
+                    >
+                      <el-option label="短 (1-2屏)" value="short" />
+                      <el-option label="中 (3-4屏)" value="medium" />
+                      <el-option label="长 (5+屏)" value="long" />
+                    </el-select>
+                  </el-form-item>
+                </el-form>
+              </div>
 
               <div class="ai-chat-actions">
                 <el-button
@@ -147,15 +213,20 @@
                   :disabled="previewMode || !aiPageInstruction.trim()"
                   @click="generateAIPage"
                 >
-                  生成整页
+                  {{ editorStore.aiPageGenerating ? "生成中…" : "智能生成网页" }}
                 </el-button>
+                <div class="ai-tip">未配置 API Key 时将根据描述自动选择模板生成</div>
               </div>
 
               <div v-if="editorStore.aiPageSummary" class="ai-draft">
                 <div class="ai-draft-title">生成说明</div>
-                <div class="ai-draft-summary">{{ editorStore.aiPageSummary }}</div>
+                <div class="ai-draft-summary">
+                  {{ editorStore.aiPageSummary }}
+                </div>
               </div>
-              <div v-if="editorStore.aiPageError" class="error">{{ editorStore.aiPageError }}</div>
+              <div v-if="editorStore.aiPageError" class="error">
+                {{ editorStore.aiPageError }}
+              </div>
             </section>
           </div>
         </template>
@@ -188,14 +259,25 @@ const aiPageInstruction = ref("");
 const collapsedLayers = ref<Set<string>>(new Set());
 const editorStore = useEditorStore();
 
+const aiPageOptions = ref({
+  pageType: "",
+  style: "",
+  primaryColor: "",
+  length: "medium",
+});
+
 const generateAIPage = async () => {
   const success = await editorStore.generateAIPage({
     instruction: aiPageInstruction.value.trim(),
+    pageType: aiPageOptions.value.pageType,
+    style: aiPageOptions.value.style,
+    primaryColor: aiPageOptions.value.primaryColor,
+    length: aiPageOptions.value.length,
   });
   if (success) {
-    ElMessage.success("整页草案已生成并替换");
+    ElMessage.success("智能网页已生成并替换");
   } else {
-    ElMessage.error(editorStore.aiPageError || "整页生成失败");
+    ElMessage.error(editorStore.aiPageError || "网页生成失败");
   }
 };
 
@@ -257,12 +339,14 @@ const filteredElements = computed(() => {
   }
 
   return paletteElements.filter(
-    (item) => item.label.toLowerCase().includes(query) || item.type.toLowerCase().includes(query)
+    (item) =>
+      item.label.toLowerCase().includes(query) ||
+      item.type.toLowerCase().includes(query),
   );
 });
 
 const activeModuleLabel = computed(
-  () => modules.find((item) => item.key === active.value)?.label ?? ""
+  () => modules.find((item) => item.key === active.value)?.label ?? "",
 );
 
 const isCollapsed = (id: string) => collapsedLayers.value.has(id);
@@ -280,7 +364,11 @@ const toggleLayer = (id: string) => {
 const layerItems = computed<LayerItem[]>(() => {
   const result: LayerItem[] = [];
 
-  const walk = (nodes: EditorNode[], depth: number, parentId: string | null) => {
+  const walk = (
+    nodes: EditorNode[],
+    depth: number,
+    parentId: string | null,
+  ) => {
     nodes.forEach((node, index) => {
       const isContainer = node.type === "container";
       result.push({
@@ -325,7 +413,7 @@ const parseMovePayload = (event: DragEvent): { nodeId: string } | null => {
 const findNodeLocation = (
   nodes: EditorNode[],
   nodeId: string,
-  parentId: string | null = null
+  parentId: string | null = null,
 ): NodeLocation | null => {
   for (let index = 0; index < nodes.length; index += 1) {
     const node = nodes[index];
@@ -359,7 +447,7 @@ const containsNodeId = (node: EditorNode, targetId: string): boolean => {
 const normalizeMoveIndex = (
   source: NodeLocation,
   toParentId: string | null,
-  toIndex: number
+  toIndex: number,
 ) => {
   let nextIndex = Math.max(0, toIndex);
   if (source.parentId === toParentId && source.index < nextIndex) {
@@ -371,7 +459,7 @@ const normalizeMoveIndex = (
 const isInvalidMoveTarget = (
   nodeId: string,
   toParentId: string | null,
-  toIndex: number
+  toIndex: number,
 ): boolean => {
   const source = findNodeLocation(editorStore.doc.root, nodeId);
   if (!source) {
@@ -393,7 +481,7 @@ const clearLayerDrag = () => {
 
 const resolveRowDropTarget = (
   event: DragEvent,
-  item: LayerItem
+  item: LayerItem,
 ): LayerDropTarget | null => {
   const host = event.currentTarget as HTMLElement | null;
   if (!host) {
@@ -435,14 +523,18 @@ const onLayerDragStart = (event: DragEvent, item: LayerItem) => {
 };
 
 const onLayerDragOver = (event: DragEvent, item: LayerItem) => {
-  const payloadNodeId = parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
+  const payloadNodeId =
+    parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
   if (!payloadNodeId || payloadNodeId === item.id) {
     layerDropTarget.value = null;
     return;
   }
 
   const target = resolveRowDropTarget(event, item);
-  if (!target || isInvalidMoveTarget(payloadNodeId, target.parentId, target.index)) {
+  if (
+    !target ||
+    isInvalidMoveTarget(payloadNodeId, target.parentId, target.index)
+  ) {
     layerDropTarget.value = null;
     return;
   }
@@ -452,7 +544,8 @@ const onLayerDragOver = (event: DragEvent, item: LayerItem) => {
 };
 
 const onLayerDrop = (event: DragEvent, item: LayerItem) => {
-  const payloadNodeId = parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
+  const payloadNodeId =
+    parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
   const target = resolveRowDropTarget(event, item);
   if (!payloadNodeId || !target) {
     clearLayerDrag();
@@ -477,7 +570,8 @@ const onLayerDrop = (event: DragEvent, item: LayerItem) => {
 };
 
 const onLayerTailDragOver = (event: DragEvent) => {
-  const payloadNodeId = parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
+  const payloadNodeId =
+    parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
   if (!payloadNodeId) {
     layerDropTarget.value = null;
     return;
@@ -489,7 +583,11 @@ const onLayerTailDragOver = (event: DragEvent) => {
     return;
   }
 
-  const targetIndex = normalizeMoveIndex(source, null, editorStore.doc.root.length);
+  const targetIndex = normalizeMoveIndex(
+    source,
+    null,
+    editorStore.doc.root.length,
+  );
   if (source.parentId === null && source.index === targetIndex) {
     layerDropTarget.value = null;
     return;
@@ -505,7 +603,8 @@ const onLayerTailDragOver = (event: DragEvent) => {
 };
 
 const onLayerTailDrop = (event: DragEvent) => {
-  const payloadNodeId = parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
+  const payloadNodeId =
+    parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
   if (!payloadNodeId) {
     clearLayerDrag();
     return;
@@ -517,7 +616,11 @@ const onLayerTailDrop = (event: DragEvent) => {
     return;
   }
 
-  const targetIndex = normalizeMoveIndex(source, null, editorStore.doc.root.length);
+  const targetIndex = normalizeMoveIndex(
+    source,
+    null,
+    editorStore.doc.root.length,
+  );
   if (source.parentId === null && source.index === targetIndex) {
     clearLayerDrag();
     return;
@@ -542,7 +645,6 @@ const onDragStart = (event: DragEvent, item: PaletteElement) => {
   event.dataTransfer.setData("application/x-edit-element", payload);
   event.dataTransfer.setData("text/plain", payload);
 };
-
 </script>
 <style scoped>
 .wg-palette {
@@ -671,7 +773,10 @@ const onDragStart = (event: DragEvent, item: PaletteElement) => {
   justify-content: center;
   align-items: center;
   gap: 7px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
 
 .element-box:hover {
@@ -734,14 +839,45 @@ const onDragStart = (event: DragEvent, item: PaletteElement) => {
   color: #6d788f;
 }
 
+.ai-options-grid {
+  margin: 10px 0;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fafafa;
+}
+
+.ai-options-grid :deep(.el-form) {
+  width: 100%;
+}
+
+.ai-options-grid :deep(.el-form-item) {
+  margin-bottom: 10px;
+}
+
+.ai-options-grid :deep(.el-select),
+.ai-options-grid :deep(.el-color-picker) {
+  width: 100%;
+}
+
 .ai-chat-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: 10px;
 }
 
 .ai-chat-actions :deep(.el-button) {
   border-radius: 8px;
+  width: 100%;
+}
+
+.ai-tip {
+  width: 100%;
+  font-size: 11px;
+  color: #738099;
+  margin-top: 6px;
+  line-height: 1.4;
 }
 
 .error {
@@ -900,7 +1036,9 @@ const onDragStart = (event: DragEvent, item: PaletteElement) => {
   height: 14px;
   border: 1px dashed transparent;
   border-radius: 6px;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .layer-tail-drop.active {

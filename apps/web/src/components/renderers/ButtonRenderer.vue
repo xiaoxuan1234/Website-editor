@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <button
     class="btn"
     :class="[`variant-${buttonVariant}`, `size-${buttonSize}`, { disabled: buttonDisabled }]"
@@ -107,7 +107,7 @@ watch(
 
 <style scoped>
 .btn {
-  border: 1px solid transparent;
+  border: none;
   border-radius: inherit;
   background: transparent;
   color: inherit;
@@ -117,22 +117,19 @@ watch(
   letter-spacing: 0.01em;
   box-shadow: none;
   cursor: pointer;
-  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  transition: background-color 0.16s ease, color 0.16s ease;
 }
 
 .btn.variant-primary {
   background: #2f68d6;
-  border-color: #2f68d6;
 }
 
 .btn.variant-outline {
   background: transparent;
-  border-color: #2f68d6;
 }
 
 .btn.variant-soft {
   background: #eaf1ff;
-  border-color: #c4d5ff;
 }
 
 .btn.size-sm {

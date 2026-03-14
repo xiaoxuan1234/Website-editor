@@ -1,4 +1,4 @@
-﻿import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
 import {
@@ -16,9 +16,14 @@ export type CreateServerOptions = {
   dbPath?: string;
   jwtSecret?: string;
   previewBaseUrl?: string;
+  /** OpenAI 兼容 API，也用于 DeepSeek */
   openAIApiKey?: string;
   openAIBaseUrl?: string;
   openAIModel?: string;
+  /** DeepSeek：若设置则优先于 OPENAI_*，用于 AI 网页生成 */
+  deepseekApiKey?: string;
+  deepseekBaseUrl?: string;
+  deepseekModel?: string;
   bodyLimitBytes?: number;
 };
 
@@ -30,13 +35,20 @@ export const createServer = async (
     bodyLimit: options.bodyLimitBytes ?? 20 * 1024 * 1024,
   });
   const db = await createDatabase(options.dbPath ?? "./data/app.db");
-  const aiProvider = options.openAIApiKey
-    ? createOpenAICompatibleProvider({
-        apiKey: options.openAIApiKey,
-        baseUrl: options.openAIBaseUrl,
-        model: options.openAIModel,
-      })
-    : createFallbackProvider();
+  const aiProvider =
+    options.deepseekApiKey
+      ? createOpenAICompatibleProvider({
+          apiKey: options.deepseekApiKey,
+          baseUrl: options.deepseekBaseUrl ?? "https://api.deepseek.com",
+          model: options.deepseekModel ?? "deepseek-chat",
+        })
+      : options.openAIApiKey
+        ? createOpenAICompatibleProvider({
+            apiKey: options.openAIApiKey,
+            baseUrl: options.openAIBaseUrl,
+            model: options.openAIModel,
+          })
+        : createFallbackProvider();
 
   app.decorate("services", {
     db,
