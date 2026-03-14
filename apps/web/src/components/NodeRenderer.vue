@@ -1,5 +1,5 @@
-<template>
-  <component :is="renderer" :node="node" :style="style">
+﻿<template>
+  <component :is="renderer" :node="node">
     <slot />
   </component>
 </template>
@@ -9,7 +9,7 @@ import { computed } from "vue";
 import type { EditorNode } from "@wg/schema";
 import { getRenderer } from "@/lib/node-renderer-registry";
 
-const props = defineProps<{ node: EditorNode; style?: Record<string, string | number> }>();
+const props = defineProps<{ node: EditorNode }>();
 
 const renderer = computed(() => getRenderer(props.node.type));
 </script>

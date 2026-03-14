@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <aside class="wg-prop">
     <header class="panel-header">
       <h3>属性设置</h3>
@@ -438,9 +438,15 @@
                   <label>默认值</label>
                   <el-input v-model="propsDraft.inputValue" :disabled="preview" placeholder="预览时展示的默认值" />
                 </div>
-                <div class="field">
-                  <label>最大长度</label>
-                  <el-input-number v-model="propsDraft.inputMaxLength" :disabled="preview" :min="0" :max="9999" />
+                <div class="field-grid cols-2">
+                  <div class="field">
+                    <label>字段名</label>
+                    <el-input v-model="propsDraft.inputName" :disabled="preview" placeholder="例如 username" />
+                  </div>
+                  <div class="field">
+                    <label>最大长度</label>
+                    <el-input-number v-model="propsDraft.inputMaxLength" :disabled="preview" :min="0" :max="9999" />
+                  </div>
                 </div>
                 <div class="field">
                   <label>是否必填</label>
@@ -1030,18 +1036,28 @@
               <el-icon :class="{ folded: !isSectionOpen('effectsShadowMain') }"><ArrowDown /></el-icon>
             </div>
             <div v-show="isSectionOpen('effectsShadowMain')" class="field">
-              <label>阴影预设</label>
-              <el-select v-model="styleDraft.boxShadow" :disabled="preview">
-                <el-option
-                  v-for="item in shadowPresetOptions"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </el-select>
+              <label>阴影</label>
+              <el-input
+                v-model="styleDraft.boxShadow"
+                :disabled="preview"
+                placeholder="例如 0 8px 20px rgba(0,0,0,.15)"
+              />
             </div>
           </section>
 
+          <section v-if="activeTab === 'effects'" class="vv-card">
+            <div class="section-head clickable" @click="toggleSection('effectsBackgroundMain')">
+              <span>背景</span>
+              <el-icon :class="{ folded: !isSectionOpen('effectsBackgroundMain') }"><ArrowDown /></el-icon>
+            </div>
+            <div v-show="isSectionOpen('effectsBackgroundMain')" class="field">
+              <label>背景色</label>
+              <div class="color-line">
+                <el-input v-model="styleDraft.backgroundColor" :disabled="preview" placeholder="例如 #f7f9ff / rgba(...)" />
+                <el-color-picker v-model="styleDraft.backgroundColor" :disabled="preview" show-alpha color-format="rgb" />
+              </div>
+            </div>
+          </section>
         </template>
       </div>
     </div>
@@ -1083,6 +1099,7 @@ type SectionKey =
   | "effectsTypographyMain"
   | "effectsTextMain"
   | "effectsShadowMain"
+  | "effectsBackgroundMain"
   | "pageMain";
 const sectionOpen = reactive<Record<SectionKey, boolean>>({
   displayLayoutMain: true,
@@ -1103,6 +1120,7 @@ const sectionOpen = reactive<Record<SectionKey, boolean>>({
   effectsTypographyMain: true,
   effectsTextMain: true,
   effectsShadowMain: true,
+  effectsBackgroundMain: true,
   pageMain: true,
 });
 
@@ -1195,16 +1213,6 @@ const fontStyleOptions = [
   { label: "斜体", value: "italic" },
   { label: "倾斜", value: "oblique" },
 ];
-const shadowPresetOptions = [
-  { label: "无阴影", value: "" },
-  { label: "轻微阴影", value: "0 1px 3px rgba(15, 23, 42, 0.12)" },
-  { label: "中等阴影", value: "0 6px 16px rgba(15, 23, 42, 0.16)" },
-  { label: "强阴影", value: "0 14px 32px rgba(15, 23, 42, 0.22)" },
-  { label: "卡片阴影", value: "0 8px 24px rgba(20, 33, 61, 0.14)" },
-  { label: "悬浮阴影", value: "0 12px 28px rgba(45, 88, 175, 0.2)" },
-  { label: "深色阴影", value: "0 10px 26px rgba(0, 0, 0, 0.28)" },
-];
-const shadowPresetValueSet = new Set(shadowPresetOptions.map((item) => item.value));
 const textDecorationOptions = [
   { label: "默认", value: "" },
   { label: "无", value: "none" },
@@ -1417,6 +1425,7 @@ const propsDraft = reactive({
   placeholder: "",
   inputType: "text",
   inputDisabled: false,
+  inputName: "",
   inputRequired: false,
   inputMaxLength: 0,
   inputValue: "",
@@ -1475,12 +1484,10 @@ const styleDraft = reactive({
   boxSizing: "",
   overflowX: "",
   overflowY: "",
-  margin: "",
   marginTop: "",
   marginRight: "",
   marginBottom: "",
   marginLeft: "",
-  padding: "",
   paddingTop: "",
   paddingRight: "",
   paddingBottom: "",
@@ -1587,125 +1594,13 @@ const clearTimers = () => {
 
 onBeforeUnmount(clearTimers);
 
-/** 将 CSS 简写属性展开为独立属性 */
-const expandShorthandStyle = (style: Record<string, unknown>): Record<string, string> => {
-  const result: Record<string, string> = {};
-  const expandedKeys = new Set<string>();
-
-  const expand = (prop: string, value: string) => {
-    const parts = value.trim().split(/\s+/);
-    const top = parts[0] || "";
-    const right = parts[1] || parts[0] || "";
-    const bottom = parts[2] || parts[0] || "";
-    const left = parts[3] || parts[1] || parts[0] || "";
-
-    const mappings: Record<string, string> = {
-      padding: `paddingTop:${top};paddingRight:${right};paddingBottom:${bottom};paddingLeft:${left}`,
-      margin: `marginTop:${top};marginRight:${right};marginBottom:${bottom};marginLeft:${left}`,
-      borderRadius: `borderTopLeftRadius:${top};borderTopRightRadius:${right};borderBottomRightRadius:${bottom};borderBottomLeftRadius:${left}`,
-    };
-
-    const expanded = mappings[prop];
-    if (expanded) {
-      expanded.split(";").forEach((pair) => {
-        const [key, val] = pair.split(":");
-        if (key && val) {
-          result[key] = val;
-          expandedKeys.add(key);
-        }
-      });
-    }
-  };
-
-  Object.entries(style).forEach(([key, value]) => {
-    if (value === undefined || value === null) return;
-    const strValue = String(value);
-
-    if (key === "padding" || key === "margin" || key === "borderRadius") {
-      expand(key, strValue);
-      // 保留原始简写属性
-      result[key] = strValue;
-    } else if (!expandedKeys.has(key)) {
-      result[key] = strValue;
-    }
-  });
-
-  return result;
-};
-
-/** 判断样式是否为简写属性的独立展开 */
-const isExpandedShorthandKey = (key: string): boolean => {
-  const expandedKeys = [
-    "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
-    "marginTop", "marginRight", "marginBottom", "marginLeft",
-    "borderTopLeftRadius", "borderTopRightRadius", "borderBottomRightRadius", "borderBottomLeftRadius",
-  ];
-  return expandedKeys.includes(key);
-};
-
-/** 构建样式补丁时，保留简写属性 */
-const buildStylePatch = (): Record<string, string | null> => {
-  const patch: Record<string, string | null> = {};
-  const shorthandProps = new Set(["padding", "margin", "borderRadius"]);
-
-  styleKeys.forEach((key) => {
-    // 如果是简写属性的展开形式，但原始简写属性仍然存在于 draft 中，则跳过
-    if (isExpandedShorthandKey(key)) {
-      const baseProp = key.replace(/(Top|Right|Bottom|Left)$/, "");
-      if (shorthandProps.has(baseProp) && styleDraft[baseProp]) {
-        return;
-      }
-    }
-    patch[key] = normalizeStyleValue(styleDraft[key]);
-  });
-  return patch;
-};
-
-const expandedStyleCache = new Map<string, Record<string, string>>();
-
-const getExpandedStyle = (target: EditorNode): Record<string, string> => {
-  if (!target) return {};
-  const nodeId = target.id;
-  const cacheKey = `${nodeId}-${editorStore.styleScope}`;
-
-  if (expandedStyleCache.has(cacheKey)) {
-    return expandedStyleCache.get(cacheKey)!;
-  }
-
-  const style = editorStore.getNodeStyleByMode(target, editorStore.styleScope) as Record<string, unknown>;
-  const expanded = expandShorthandStyle(style);
-  expandedStyleCache.set(cacheKey, expanded);
-  return expanded;
-};
-
 const readScopedStyle = (target: EditorNode, key: string): string => {
-  const expanded = getExpandedStyle(target);
-  // 优先返回原始简写属性
-  const shorthandKeys: Record<string, string> = {
-    paddingTop: "padding",
-    paddingRight: "padding",
-    paddingBottom: "padding",
-    paddingLeft: "padding",
-    marginTop: "margin",
-    marginRight: "margin",
-    marginBottom: "margin",
-    marginLeft: "margin",
-    borderTopLeftRadius: "borderRadius",
-    borderTopRightRadius: "borderRadius",
-    borderBottomRightRadius: "borderRadius",
-    borderBottomLeftRadius: "borderRadius",
-  };
-  const shorthandKey = shorthandKeys[key];
-  if (shorthandKey && expanded[shorthandKey]) {
-    return expanded[shorthandKey];
-  }
-  const value = expanded[key];
-  return value ?? "";
-};
-
-/** 清除样式缓存 */
-const clearStyleCache = () => {
-  expandedStyleCache.clear();
+  const style = editorStore.getNodeStyleByMode(target, editorStore.styleScope) as Record<
+    string,
+    unknown
+  >;
+  const value = style[key];
+  return value === undefined || value === null ? "" : String(value);
 };
 
 const fillDraft = (target: EditorNode | null) => {
@@ -1737,6 +1632,7 @@ const fillDraft = (target: EditorNode | null) => {
     propsDraft.placeholder = "";
     propsDraft.inputType = "text";
     propsDraft.inputDisabled = false;
+    propsDraft.inputName = "";
     propsDraft.inputRequired = false;
     propsDraft.inputMaxLength = 0;
     propsDraft.inputValue = "";
@@ -1789,6 +1685,7 @@ const fillDraft = (target: EditorNode | null) => {
   propsDraft.placeholder = String(target.props.placeholder ?? "");
   propsDraft.inputType = String(target.props.type ?? "text");
   propsDraft.inputDisabled = Boolean(target.props.disabled ?? false);
+  propsDraft.inputName = String(target.props.name ?? "");
   propsDraft.inputRequired = Boolean(target.props.required ?? false);
   propsDraft.inputMaxLength = Math.max(0, Number(target.props.maxLength ?? 0) || 0);
   propsDraft.inputValue = String(target.props.value ?? "");
@@ -1827,9 +1724,6 @@ const fillDraft = (target: EditorNode | null) => {
   styleKeys.forEach((key) => {
     styleDraft[key] = readScopedStyle(target, key);
   });
-  if (!shadowPresetValueSet.has(styleDraft.boxShadow)) {
-    styleDraft.boxShadow = "";
-  }
 
   pageDraft.backgroundColor = String(editorStore.pageStyle.backgroundColor ?? "#ffffff");
   pageDraft.backgroundImage = String(editorStore.pageStyle.backgroundImage ?? "");
@@ -1841,15 +1735,11 @@ const fillDraft = (target: EditorNode | null) => {
   syncingDraft.value = false;
 };
 
-watch(node, (value) => {
-  clearStyleCache();
-  fillDraft(value);
-}, { immediate: true });
+watch(node, (value) => fillDraft(value), { immediate: true });
 
 watch(
   () => editorStore.styleScope,
   () => {
-    clearStyleCache();
     if (!node.value) {
       return;
     }
@@ -1896,6 +1786,7 @@ const buildPropsPatch = (current: EditorNode): Record<string, unknown> => {
       placeholder: propsDraft.placeholder,
       type: propsDraft.inputType,
       disabled: propsDraft.inputDisabled,
+      name: propsDraft.inputName,
       required: propsDraft.inputRequired,
       maxLength: propsDraft.inputMaxLength > 0 ? Math.floor(propsDraft.inputMaxLength) : null,
       value: propsDraft.inputValue,
@@ -2134,6 +2025,14 @@ const buildDisplayPatch = (): Record<string, string | number | null> => ({
   backgroundColor: normalizeStyleValue(displayDraft.backgroundColor),
   color: normalizeStyleValue(displayDraft.color),
 });
+
+const buildStylePatch = (): Record<string, string | null> => {
+  const patch: Record<string, string | null> = {};
+  styleKeys.forEach((key) => {
+    patch[key] = normalizeStyleValue(styleDraft[key]);
+  });
+  return patch;
+};
 
 const isPatchDifferent = (current: Record<string, unknown>, patch: Record<string, unknown>) =>
   Object.entries(patch).some(([key, value]) => current[key] !== value);

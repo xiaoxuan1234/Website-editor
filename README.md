@@ -1,4 +1,4 @@
-# Web Generator V2 (Monorepo)
+﻿# 网页编辑器(毕业设计)
 
 This repository now uses a `pnpm` workspace with a frontend app, backend API, and shared packages for schema/editor/AI logic.
 
@@ -68,14 +68,9 @@ pnpm test:e2e
 - `DB_PATH` (default `./data/app.db`)
 - `JWT_SECRET` (default `dev-secret-change-me`)
 - `WEB_PREVIEW_BASE_URL` (default `http://localhost:5173`)
-- **AI 网页生成**（二选一，DeepSeek 优先）：
-  - `DEEPSEEK_API_KEY`（推荐）：设置后使用 DeepSeek 生成，无需再配 base/model）
-  - `DEEPSEEK_BASE_URL`（可选，默认 `https://api.deepseek.com`）
-  - `DEEPSEEK_MODEL`（可选，默认 `deepseek-chat`）
-  - 或使用 OpenAI：`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL`
-- 未配置任何 API Key 时使用内置模板回退。
-
-在 `apps/server` 下复制 `.env.example` 为 `.env` 并填入 Key 即可（不要提交 `.env`）。
+- `OPENAI_API_KEY` (optional, if missing uses fallback provider)
+- `OPENAI_BASE_URL` (optional, default OpenAI endpoint)
+- `OPENAI_MODEL` (optional, default `gpt-4.1-mini`)
 
 ## Key API endpoints
 
@@ -89,7 +84,7 @@ pnpm test:e2e
 - `GET /pages/:id`
 - `PUT /pages/:id/draft`
 - `POST /pages/:id/publish`
-- `GET /pages/:id/export-zip`
+- `GET /pages/:id/export-json`
 - `POST /preview`
 - `GET /preview/:slug`
-- `POST /ai/page/generate`
+- `POST /ai/content/generate`

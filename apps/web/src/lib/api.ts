@@ -1,7 +1,7 @@
 ﻿import {
   AuthLoginResponseSchema,
-  type AIPageGenerateRequest,
-  type AIPageGenerateResponse,
+  type AIContentGenerateRequest,
+  type AIContentGenerateResponse,
   type PageDocumentV2,
   type PageSummary,
   type Project,
@@ -82,73 +82,6 @@ const request = async <T>(
   }
 
   return (await response.json()) as T;
-};
-
-const parseDownloadFileName = (contentDisposition: string | null): string | null => {
-  if (!contentDisposition) {
-    return null;
-  }
-
-  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8Match?.[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1]);
-    } catch {
-      return null;
-    }
-  }
-
-  const plainMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
-  return plainMatch?.[1]?.trim() || null;
-};
-
-const requestBlob = async (
-  path: string,
-  options: RequestInit = {},
-  accessToken?: string
-): Promise<{ blob: Blob; fileName: string }> => {
-  const headers = new Headers(options.headers ?? {});
-  if (accessToken) {
-    headers.set("Authorization", `Bearer ${accessToken}`);
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}${path}`, {
-      ...options,
-      headers,
-    });
-  } catch {
-    throw new ApiError("无法连接到服务，请检查后端是否运行", 0, "NETWORK_ERROR");
-  }
-
-  if (!response.ok) {
-    const text = await response.text();
-    let parsed: ErrorPayload | null = null;
-
-    if (text) {
-      try {
-        parsed = JSON.parse(text) as ErrorPayload;
-      } catch {
-        parsed = null;
-      }
-    }
-
-    const status = response.status;
-    const code = parsed?.code;
-    const message =
-      parsed?.message ||
-      (text && !parsed ? text : "") ||
-      (status === 413 ? "请求体过大，请压缩图片后重试" : "") ||
-      `请求失败(${status})`;
-
-    throw new ApiError(message, status, code);
-  }
-
-  const fileName =
-    parseDownloadFileName(response.headers.get("Content-Disposition")) || "page-export.zip";
-  const blob = await response.blob();
-  return { blob, fileName };
 };
 
 export const apiClient = {
@@ -248,7 +181,11 @@ export const apiClient = {
   },
 
   async exportJson(accessToken: string, pageId: string) {
-    return requestBlob(`/pages/${pageId}/export-zip`, {}, accessToken);
+    return request<{ fileName: string; document: PageDocumentV2 }>(
+      `/pages/${pageId}/export-json`,
+      {},
+      accessToken
+    );
   },
 
   async createPreview(accessToken: string, pageId: string) {
@@ -268,12 +205,12 @@ export const apiClient = {
     );
   },
 
-  async generateAIPage(
+  async generateAI(
     accessToken: string,
-    payload: AIPageGenerateRequest
-  ): Promise<AIPageGenerateResponse> {
-    return request<AIPageGenerateResponse>(
-      "/ai/page/generate",
+    payload: AIContentGenerateRequest
+  ): Promise<AIContentGenerateResponse> {
+    return request<AIContentGenerateResponse>(
+      "/ai/content/generate",
       {
         method: "POST",
         body: JSON.stringify(payload),

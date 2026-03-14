@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div
     ref="rootRef"
     class="tree-node"
@@ -15,11 +15,8 @@
       v-if="node.type !== 'container'"
       ref="contentRef"
       class="node-content"
-      :class="{
-        'node-content-image': node.type === 'image',
-        'node-content-leaf-control': node.type === 'button' || node.type === 'input',
-      }"
-      :style="nodeContentWrapperStyle"
+      :class="{ 'node-content-image': node.type === 'image' }"
+      :style="nodeInlineStyle"
     >
       <div class="node-type-tag">{{ nodeTypeLabel }}</div>
       <div v-if="showToolbar" class="node-toolbar" @click.stop>
@@ -62,7 +59,7 @@
           ×
         </button>
       </div>
-      <NodeRenderer :node="node" :style="nodeRenderableInlineStyle" />
+      <NodeRenderer :node="node" :style="nodeRadiusInlineStyle" />
     </div>
 
     <div
@@ -198,55 +195,10 @@ let sizeObserver: ResizeObserver | null = null;
 const nodeInlineStyle = computed(
   () => editorStore.getNodeStyleByMode(props.node) as Record<string, string | number>
 );
-/** 按钮/输入框的外层不应用 border 相关，避免与组件自身边框叠加成双层 */
-const nodeContentWrapperStyle = computed<Record<string, string | number>>(() => {
-  const style = nodeInlineStyle.value;
-  if (props.node.type === "button" || props.node.type === "input") {
-    const exclude = new Set([
-      "border",
-      "borderWidth",
-      "borderStyle",
-      "borderColor",
-      "borderRadius",
-      "borderTopLeftRadius",
-      "borderTopRightRadius",
-      "borderBottomRightRadius",
-      "borderBottomLeftRadius",
-      "boxShadow",
-    ]);
-    const next: Record<string, string | number> = {};
-    Object.entries(style).forEach(([k, v]) => {
-      if (!exclude.has(k) && v !== undefined && v !== null && String(v).trim() !== "") {
-        next[k] = v;
-      }
-    });
-    return next;
-  }
-  return style;
-});
-const nodeRenderableInlineStyle = computed<Record<string, string | number>>(() => {
+const nodeRadiusInlineStyle = computed<Record<string, string | number>>(() => {
   const style = nodeInlineStyle.value;
   const next: Record<string, string | number> = {};
   const keys = [
-    "backgroundColor",
-    "color",
-    "fontSize",
-    "fontWeight",
-    "fontFamily",
-    "fontStyle",
-    "lineHeight",
-    "letterSpacing",
-    "textAlign",
-    "verticalAlign",
-    "textDecoration",
-    "textTransform",
-    "whiteSpace",
-    "wordBreak",
-    "borderWidth",
-    "borderStyle",
-    "borderColor",
-    "boxShadow",
-    "cursor",
     "borderRadius",
     "borderTopLeftRadius",
     "borderTopRightRadius",
@@ -504,17 +456,12 @@ onBeforeUnmount(() => {
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.node-content.node-content-leaf-control {
-  border: none;
-}
-
 .node-content-image {
   padding: 0;
 }
 
 .node-content > :deep(*) {
   border-radius: inherit;
-  font-style: inherit;
 }
 
 .children-zone {
@@ -537,11 +484,6 @@ onBeforeUnmount(() => {
 .tree-node:hover > .children-zone {
   border-color: #86aaf7;
   box-shadow: 0 0 0 2px rgba(67, 113, 216, 0.1);
-}
-
-.tree-node:hover > .node-content.node-content-leaf-control,
-.tree-node.active > .node-content.node-content-leaf-control {
-  border-color: transparent;
 }
 
 .tree-node.active > .node-content,
@@ -579,9 +521,9 @@ onBeforeUnmount(() => {
 
 .node-toolbar {
   position: absolute;
-  top: -4px;
+  top: 0;
   right: 0;
-  transform: translateY(-100%);
+  transform: translate(0, -50%);
   display: inline-flex;
   align-items: center;
   gap: 4px;
