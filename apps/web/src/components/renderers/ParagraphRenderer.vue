@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <p
     ref="editableRef"
     class="paragraph"
@@ -8,9 +8,8 @@
     @click.stop="handleSelect"
     @focus="handleSelect"
     @blur="handleBlur"
-  >
-    {{ content }}
-  </p>
+    v-html="content"
+  />
 </template>
 
 <script setup lang="ts">
@@ -41,8 +40,7 @@ const commitValue = () => {
     return;
   }
 
-  const next = host.innerText.trim() || "这是一段段落内容";
-  host.innerText = next;
+  const next = host.innerHTML.trim() || "这是一段段落内容";
 
   if (next !== content.value) {
     editorStore.selectNode(props.node.id);
@@ -62,8 +60,8 @@ watch(
       return;
     }
 
-    if (document.activeElement !== host && host.innerText !== value) {
-      host.innerText = value;
+    if (document.activeElement !== host && host.innerHTML !== value) {
+      host.innerHTML = value;
     }
   },
   { immediate: true }

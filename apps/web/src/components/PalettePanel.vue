@@ -156,6 +156,9 @@
                 :disabled="previewMode"
               />
 
+              <el-divider content-position="left" style="margin: 8px 0"
+                >基础配置</el-divider
+              >
               <div class="ai-options-grid">
                 <el-form label-width="80px" size="small">
                   <el-form-item label="页面类型">
@@ -165,11 +168,10 @@
                     >
                       <el-option label="首页" value="home" />
                       <el-option label="产品页" value="product" />
-                      <el-option label="服务页" value="service" />
-                      <el-option label="关于我们" value="about" />
-                      <el-option label="联系我们" value="contact" />
-                      <el-option label="博客" value="blog" />
-                      <el-option label="登录/注册" value="auth" />
+                      <el-option label="联系页" value="contact" />
+                      <el-option label="着陆页" value="landing" />
+                      <el-option label="作品集" value="portfolio" />
+                      <el-option label="企业官网" value="business" />
                     </el-select>
                   </el-form-item>
 
@@ -183,9 +185,32 @@
                       <el-option label="创意个性" value="creative" />
                       <el-option label="科技感" value="tech" />
                       <el-option label="温暖友好" value="friendly" />
+                      <el-option label="极简主义" value="minimal" />
+                      <el-option label="复古风格" value="retro" />
+                      <el-option label="奢华高端" value="luxury" />
                     </el-select>
                   </el-form-item>
 
+                  <el-form-item label="语气风格">
+                    <el-select
+                      v-model="aiPageOptions.tone"
+                      placeholder="选择语气"
+                    >
+                      <el-option label="专业正式" value="professional" />
+                      <el-option label="轻松友好" value="friendly" />
+                      <el-option label="活力激情" value="energetic" />
+                      <el-option label="优雅精致" value="elegant" />
+                      <el-option label="简洁直接" value="concise" />
+                    </el-select>
+                  </el-form-item>
+                </el-form>
+              </div>
+
+              <el-divider content-position="left" style="margin: 8px 0"
+                >配色方案</el-divider
+              >
+              <div class="ai-options-grid">
+                <el-form label-width="80px" size="small">
                   <el-form-item label="主色调">
                     <el-color-picker
                       v-model="aiPageOptions.primaryColor"
@@ -193,6 +218,27 @@
                     />
                   </el-form-item>
 
+                  <el-form-item label="辅助色">
+                    <el-color-picker
+                      v-model="aiPageOptions.secondaryColor"
+                      show-alpha
+                    />
+                  </el-form-item>
+
+                  <el-form-item label="背景色">
+                    <el-color-picker
+                      v-model="aiPageOptions.backgroundColor"
+                      show-alpha
+                    />
+                  </el-form-item>
+                </el-form>
+              </div>
+
+              <el-divider content-position="left" style="margin: 8px 0"
+                >页面结构</el-divider
+              >
+              <div class="ai-options-grid">
+                <el-form label-width="80px" size="small">
                   <el-form-item label="页面长度">
                     <el-select
                       v-model="aiPageOptions.length"
@@ -201,6 +247,102 @@
                       <el-option label="短 (1-2屏)" value="short" />
                       <el-option label="中 (3-4屏)" value="medium" />
                       <el-option label="长 (5+屏)" value="long" />
+                    </el-select>
+                  </el-form-item>
+
+                  <el-form-item label="复杂度">
+                    <el-select
+                      v-model="aiPageOptions.complexity"
+                      placeholder="选择复杂度"
+                    >
+                      <el-option label="简洁" value="simple" />
+                      <el-option label="适中" value="medium" />
+                      <el-option label="丰富" value="complex" />
+                    </el-select>
+                  </el-form-item>
+
+                  <el-form-item label="布局方式">
+                    <el-select
+                      v-model="aiPageOptions.layout"
+                      placeholder="选择布局"
+                    >
+                      <el-option label="现代布局" value="modern" />
+                      <el-option label="传统布局" value="classic" />
+                      <el-option label="卡片式" value="card" />
+                      <el-option label="单栏式" value="single" />
+                    </el-select>
+                  </el-form-item>
+                </el-form>
+              </div>
+
+              <el-divider content-position="left" style="margin: 8px 0"
+                >内容区块</el-divider
+              >
+              <div class="ai-options-grid">
+                <div class="section-checklist">
+                  <div class="section-row">
+                    <el-checkbox
+                      v-for="section in sectionPresets"
+                      :key="section.value"
+                      v-model="section.checked"
+                    >
+                      {{ section.label }}
+                    </el-checkbox>
+                  </div>
+                </div>
+              </div>
+
+              <el-divider content-position="left" style="margin: 8px 0"
+                >行业与受众</el-divider
+              >
+              <div class="ai-options-grid">
+                <el-form label-width="80px" size="small">
+                  <el-form-item label="所属行业">
+                    <el-select
+                      v-model="aiPageOptions.industry"
+                      placeholder="选择行业"
+                      clearable
+                    >
+                      <el-option label="科技互联网" value="tech" />
+                      <el-option label="教育培训" value="education" />
+                      <el-option label="金融理财" value="finance" />
+                      <el-option label="医疗健康" value="healthcare" />
+                      <el-option label="电商零售" value="ecommerce" />
+                      <el-option label="文化传媒" value="media" />
+                      <el-option label="旅游出行" value="travel" />
+                      <el-option label="房地产" value="realestate" />
+                      <el-option label="制造业" value="manufacturing" />
+                      <el-option label="餐饮美食" value="food" />
+                    </el-select>
+                  </el-form-item>
+
+                  <el-form-item label="目标受众">
+                    <el-select
+                      v-model="aiPageOptions.audience"
+                      placeholder="选择受众"
+                      clearable
+                    >
+                      <el-option label="企业客户 (B2B)" value="b2b" />
+                      <el-option label="个人消费者 (B2C)" value="b2c" />
+                      <el-option label="年轻群体" value="young" />
+                      <el-option label="中年群体" value="middle" />
+                      <el-option label="高端用户" value="premium" />
+                      <el-option label="大众市场" value="mass" />
+                    </el-select>
+                  </el-form-item>
+
+                  <el-form-item label="内容重点">
+                    <el-select
+                      v-model="aiPageOptions.contentFocus"
+                      placeholder="选择重点"
+                      clearable
+                    >
+                      <el-option label="产品展示" value="product" />
+                      <el-option label="服务介绍" value="service" />
+                      <el-option label="品牌故事" value="brand" />
+                      <el-option label="信息传达" value="info" />
+                      <el-option label="线索获取" value="leads" />
+                      <el-option label="销售转化" value="sales" />
                     </el-select>
                   </el-form-item>
                 </el-form>
@@ -213,9 +355,13 @@
                   :disabled="previewMode || !aiPageInstruction.trim()"
                   @click="generateAIPage"
                 >
-                  {{ editorStore.aiPageGenerating ? "生成中…" : "智能生成网页" }}
+                  {{
+                    editorStore.aiPageGenerating ? "生成中…" : "智能生成网页"
+                  }}
                 </el-button>
-                <div class="ai-tip">未配置 API Key 时将根据描述自动选择模板生成</div>
+                <div class="ai-tip">
+                  未配置 API Key 时将根据描述自动选择模板生成
+                </div>
               </div>
 
               <div v-if="editorStore.aiPageSummary" class="ai-draft">
@@ -262,17 +408,52 @@ const editorStore = useEditorStore();
 const aiPageOptions = ref({
   pageType: "",
   style: "",
-  primaryColor: "",
+  primaryColor: "#3366ff",
+  secondaryColor: "#666666",
+  backgroundColor: "#ffffff",
+  tone: "",
   length: "medium",
+  complexity: "medium",
+  layout: "modern",
+  contentFocus: "",
+  audience: "",
+  industry: "",
+  sections: [] as string[],
 });
 
+const sectionPresets = ref([
+  { label: "英雄区", value: "hero", checked: true },
+  { label: "特性介绍", value: "features", checked: true },
+  { label: "关于我们", value: "about", checked: true },
+  { label: "服务介绍", value: "services", checked: true },
+  { label: "团队介绍", value: "team", checked: false },
+  { label: "客户评价", value: "testimonials", checked: false },
+  { label: "作品展示", value: "gallery", checked: false },
+  { label: "常见问题", value: "faq", checked: false },
+  { label: "联系表单", value: "contact", checked: false },
+  { label: "行动号召", value: "cta", checked: true },
+]);
+
 const generateAIPage = async () => {
+  const selectedSections = sectionPresets.value
+    .filter((s) => s.checked)
+    .map((s) => s.value);
+
   const success = await editorStore.generateAIPage({
     instruction: aiPageInstruction.value.trim(),
-    pageType: aiPageOptions.value.pageType,
-    style: aiPageOptions.value.style,
-    primaryColor: aiPageOptions.value.primaryColor,
-    length: aiPageOptions.value.length,
+    pageType: aiPageOptions.value.pageType || undefined,
+    style: aiPageOptions.value.style || undefined,
+    primaryColor: aiPageOptions.value.primaryColor || undefined,
+    secondaryColor: aiPageOptions.value.secondaryColor || undefined,
+    backgroundColor: aiPageOptions.value.backgroundColor || undefined,
+    tone: aiPageOptions.value.tone || undefined,
+    length: aiPageOptions.value.length || undefined,
+    complexity: aiPageOptions.value.complexity || undefined,
+    layout: aiPageOptions.value.layout || undefined,
+    contentFocus: aiPageOptions.value.contentFocus || undefined,
+    audience: aiPageOptions.value.audience || undefined,
+    industry: aiPageOptions.value.industry || undefined,
+    sections: selectedSections.length > 0 ? selectedSections : undefined,
   });
   if (success) {
     ElMessage.success("智能网页已生成并替换");
@@ -858,6 +1039,33 @@ const onDragStart = (event: DragEvent, item: PaletteElement) => {
 .ai-options-grid :deep(.el-select),
 .ai-options-grid :deep(.el-color-picker) {
   width: 100%;
+}
+
+.section-checklist {
+  width: 100%;
+}
+
+.section-checklist :deep(.el-checkbox-group) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.section-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.section-row :deep(.el-checkbox) {
+  margin-right: 0;
+  margin-bottom: 4px;
+}
+
+.section-row :deep(.el-checkbox__label) {
+  font-size: 12px;
 }
 
 .ai-chat-actions {

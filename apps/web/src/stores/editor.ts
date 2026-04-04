@@ -112,13 +112,17 @@ export const useEditorStore = defineStore("editor", () => {
     return raw as PageStyle;
   });
 
-  const getNodeStyleByMode = (node: EditorNode, mode: DeviceMode = deviceMode.value) =>
-    resolveNodeStyleByDevice(node, mode);
+  const getNodeStyleByMode = (
+    node: EditorNode,
+    mode: DeviceMode = deviceMode.value,
+  ) => resolveNodeStyleByDevice(node, mode);
 
   const canUndo = computed(() => history.value.canUndo);
   const canRedo = computed(() => history.value.canRedo);
   const isAuthed = computed(() => Boolean(tokens.value?.accessToken));
-  const hasLocalDraftCandidate = computed(() => Boolean(localDraftCandidate.value));
+  const hasLocalDraftCandidate = computed(() =>
+    Boolean(localDraftCandidate.value),
+  );
 
   const cloneDoc = (value: PageDocumentV2): PageDocumentV2 =>
     JSON.parse(JSON.stringify(value)) as PageDocumentV2;
@@ -164,7 +168,10 @@ export const useEditorStore = defineStore("editor", () => {
     writeLocalDraftMap(map);
   };
 
-  const syncLocalDraftCandidate = (pageId: string, serverDoc: PageDocumentV2) => {
+  const syncLocalDraftCandidate = (
+    pageId: string,
+    serverDoc: PageDocumentV2,
+  ) => {
     const map = readLocalDraftMap();
     const candidate = map[pageId];
     if (!candidate) {
@@ -187,7 +194,7 @@ export const useEditorStore = defineStore("editor", () => {
       JSON.stringify({
         user: user.value,
         tokens: tokens.value,
-      })
+      }),
     );
   };
 
@@ -219,13 +226,18 @@ export const useEditorStore = defineStore("editor", () => {
     return tokens.value.accessToken;
   };
 
-  const withRefresh = async <T>(action: (token: string) => Promise<T>): Promise<T> => {
+  const withRefresh = async <T>(
+    action: (token: string) => Promise<T>,
+  ): Promise<T> => {
     try {
       const accessToken = await ensureToken();
       return await action(accessToken);
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      if (!tokens.value || (!message.includes("401") && !message.includes("Unauthorized"))) {
+      if (
+        !tokens.value ||
+        (!message.includes("401") && !message.includes("Unauthorized"))
+      ) {
         throw error;
       }
 
@@ -262,7 +274,7 @@ export const useEditorStore = defineStore("editor", () => {
       executeCommand(
         { doc: doc.value },
         history.value,
-        createUpdateNodeStyleCommand(nodeId, patch)
+        createUpdateNodeStyleCommand(nodeId, patch),
       );
       touchDocument();
       queueAutoSave();
@@ -274,11 +286,15 @@ export const useEditorStore = defineStore("editor", () => {
       return;
     }
 
-    const responsiveStyle = mergeResponsiveStylePatch(node, styleScope.value, patch);
+    const responsiveStyle = mergeResponsiveStylePatch(
+      node,
+      styleScope.value,
+      patch,
+    );
     executeCommand(
       { doc: doc.value },
       history.value,
-      createUpdateNodePropsCommand(nodeId, { responsiveStyle })
+      createUpdateNodePropsCommand(nodeId, { responsiveStyle }),
     );
     touchDocument();
     queueAutoSave();
@@ -300,7 +316,7 @@ export const useEditorStore = defineStore("editor", () => {
           executeCommand(
             { doc: doc.value },
             history.value,
-            createUpdateNodePropsCommand(propsEntry.nodeId, propsEntry.patch)
+            createUpdateNodePropsCommand(propsEntry.nodeId, propsEntry.patch),
           );
           touchDocument();
           queueAutoSave();
@@ -343,7 +359,7 @@ export const useEditorStore = defineStore("editor", () => {
             projectId,
             updatedAt: new Date().toISOString(),
             status: "draft",
-          })
+          }),
         );
         autoSaveError.value = "";
         lastSavedAt.value = new Date().toISOString();
@@ -466,10 +482,14 @@ export const useEditorStore = defineStore("editor", () => {
 
     loading.value = true;
     try {
-      projects.value = await withRefresh((token) => apiClient.getProjects(token));
+      projects.value = await withRefresh((token) =>
+        apiClient.getProjects(token),
+      );
 
       if (projects.value.length === 0) {
-        const created = await withRefresh((token) => apiClient.createProject(token, "默认项目"));
+        const created = await withRefresh((token) =>
+          apiClient.createProject(token, "默认项目"),
+        );
         projects.value = [created];
       }
 
@@ -480,13 +500,13 @@ export const useEditorStore = defineStore("editor", () => {
 
       currentProjectId.value = activeProject.id;
       const projectDetail = await withRefresh((token) =>
-        apiClient.getProject(token, activeProject.id)
+        apiClient.getProject(token, activeProject.id),
       );
       pages.value = projectDetail.pages;
 
       if (pages.value.length === 0) {
         const createdPage = await withRefresh((token) =>
-          apiClient.createPage(token, activeProject.id, "首页")
+          apiClient.createPage(token, activeProject.id, "首页"),
         );
         pages.value = [
           {
@@ -537,7 +557,11 @@ export const useEditorStore = defineStore("editor", () => {
     applyCommand(createDuplicateNodeCommand(nodeId, createNodeId));
   };
 
-  const moveNode = (nodeId: string, toParentId: string | null, toIndex: number) => {
+  const moveNode = (
+    nodeId: string,
+    toParentId: string | null,
+    toIndex: number,
+  ) => {
     applyCommand(createMoveNodeCommand(nodeId, toParentId, toIndex));
   };
 
@@ -572,7 +596,7 @@ export const useEditorStore = defineStore("editor", () => {
   };
 
   const updateSelectedStyle = (
-    patch: Record<string, string | number | boolean | null>
+    patch: Record<string, string | number | boolean | null>,
   ) => {
     const node = selectedNode.value;
     if (!node) {
@@ -610,7 +634,7 @@ export const useEditorStore = defineStore("editor", () => {
     };
 
     const changed = Object.keys(next).some(
-      (key) => pageStyle.value[key] !== next[key]
+      (key) => pageStyle.value[key] !== next[key],
     );
 
     if (!changed) {
@@ -620,7 +644,7 @@ export const useEditorStore = defineStore("editor", () => {
     applyCommand(
       createUpdateDocumentMetaCommand({
         pageStyle: next,
-      })
+      }),
     );
   };
 
@@ -645,8 +669,16 @@ export const useEditorStore = defineStore("editor", () => {
     pageType?: string;
     style?: string;
     primaryColor?: string;
+    secondaryColor?: string;
+    backgroundColor?: string;
     tone?: string;
     length?: string;
+    complexity?: string;
+    layout?: string;
+    contentFocus?: string;
+    audience?: string;
+    industry?: string;
+    sections?: string[];
     language?: string;
     keywords?: string[];
   }): Promise<boolean> => {
@@ -675,20 +707,30 @@ export const useEditorStore = defineStore("editor", () => {
           pageType: payload.pageType,
           style: payload.style,
           primaryColor: payload.primaryColor,
+          secondaryColor: payload.secondaryColor,
+          backgroundColor: payload.backgroundColor,
           tone: payload.tone,
           length: payload.length,
+          complexity: payload.complexity,
+          layout: payload.layout,
+          contentFocus: payload.contentFocus,
+          audience: payload.audience,
+          industry: payload.industry,
+          sections: payload.sections,
           language: payload.language,
           keywords: payload.keywords,
-        })
+        }),
       );
 
-      doc.value = {
+      const newDoc = {
         ...result.document,
         id: currentPageId.value,
         projectId: currentProjectId.value,
-        status: "draft",
+        status: "draft" as const,
         updatedAt: new Date().toISOString(),
       };
+
+      doc.value = JSON.parse(JSON.stringify(newDoc));
       selectedNodeId.value = doc.value.root[0]?.id ?? "";
       aiPageSummary.value = result.reasoningSummary || "AI 已生成智能网页";
       resetHistory();
@@ -696,7 +738,8 @@ export const useEditorStore = defineStore("editor", () => {
       queueAutoSave();
       return true;
     } catch (error) {
-      aiPageError.value = error instanceof Error ? error.message : "网页生成失败";
+      aiPageError.value =
+        error instanceof Error ? error.message : "网页生成失败";
       return false;
     } finally {
       aiPageGenerating.value = false;
@@ -718,7 +761,9 @@ export const useEditorStore = defineStore("editor", () => {
 
     saving.value = true;
     try {
-      await withRefresh((token) => apiClient.saveDraft(token, pageId, doc.value));
+      await withRefresh((token) =>
+        apiClient.saveDraft(token, pageId, doc.value),
+      );
       autoSaveError.value = "";
       lastSavedAt.value = new Date().toISOString();
       clearLocalDraftSnapshot(pageId);
@@ -744,7 +789,9 @@ export const useEditorStore = defineStore("editor", () => {
       return null;
     }
 
-    const payload = await withRefresh((token) => apiClient.publish(token, currentPageId.value));
+    const payload = await withRefresh((token) =>
+      apiClient.publish(token, currentPageId.value),
+    );
     publishPreviewUrl.value = payload.previewUrl;
     return payload.previewUrl;
   };
@@ -761,7 +808,7 @@ export const useEditorStore = defineStore("editor", () => {
     }
 
     const preview = await withRefresh((token) =>
-      apiClient.createPreview(token, currentPageId.value)
+      apiClient.createPreview(token, currentPageId.value),
     );
     publishPreviewUrl.value = preview.previewUrl;
     return preview.previewUrl;
@@ -774,7 +821,7 @@ export const useEditorStore = defineStore("editor", () => {
     }
 
     const payload = await withRefresh((token) =>
-      apiClient.exportJson(token, currentPageId.value)
+      apiClient.exportJson(token, currentPageId.value),
     );
 
     const url = URL.createObjectURL(payload.blob);

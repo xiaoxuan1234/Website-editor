@@ -71,10 +71,18 @@ export const AIPageGenerateRequestSchema = z.object({
   pageType: z.string().optional(),
   style: z.string().optional(),
   primaryColor: z.string().optional(),
+  secondaryColor: z.string().optional(),
+  backgroundColor: z.string().optional(),
   tone: z.string().optional(),
   length: z.string().optional(),
   language: z.string().optional(),
   keywords: z.array(z.string()).optional(),
+  complexity: z.string().optional(),
+  layout: z.string().optional(),
+  contentFocus: z.string().optional(),
+  audience: z.string().optional(),
+  industry: z.string().optional(),
+  sections: z.array(z.string()).optional(),
 });
 
 export const AIPageGenerateResponseSchema = z.object({
@@ -98,4 +106,6 @@ export type AuthLoginResponse = z.infer<typeof AuthLoginResponseSchema>;
 export type Project = z.infer<typeof ProjectSchema>;
 export type PageSummary = z.infer<typeof PageSummarySchema>;
 export type AIPageGenerateRequest = z.infer<typeof AIPageGenerateRequestSchema>;
-export type AIPageGenerateResponse = z.infer<typeof AIPageGenerateResponseSchema>;
+export type AIPageGenerateResponse = z.infer<
+  typeof AIPageGenerateResponseSchema
+>;

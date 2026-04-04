@@ -1,4 +1,4 @@
-﻿import { and, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import {
   AIPageGenerateRequestSchema,
@@ -13,66 +13,80 @@ export const registerAIRoutes = async (app: FastifyInstance) => {
     "/ai/page/generate",
     { preHandler: app.authenticate },
     async (request, reply) => {
-      const authUser = getAuthUser(request);
-      const body = parseBody(request, reply, AIPageGenerateRequestSchema);
-      if (!body) {
-        return;
-      }
+      try {
+        const authUser = getAuthUser(request);
+        const body = parseBody(request, reply, AIPageGenerateRequestSchema);
+        if (!body) {
+          return;
+        }
 
-      const ownership = await app.services.db.db
-        .select({ pageId: pages.id, version: pages.version })
-        .from(pages)
-        .innerJoin(projects, eq(projects.id, pages.projectId))
-        .where(
-          and(
-            eq(pages.id, body.pageId),
-            eq(projects.id, body.projectId),
-            eq(projects.userId, authUser.sub)
+        const ownership = await app.services.db.db
+          .select({ pageId: pages.id, version: pages.version })
+          .from(pages)
+          .innerJoin(projects, eq(projects.id, pages.projectId))
+          .where(
+            and(
+              eq(pages.id, body.pageId),
+              eq(projects.id, body.projectId),
+              eq(projects.userId, authUser.sub),
+            ),
           )
-        )
-        .get();
+          .get();
 
-      if (!ownership) {
-        return reply.code(403).send({ message: "No access to this page" });
-      }
+        if (!ownership) {
+          return reply.code(403).send({ message: "No access to this page" });
+        }
 
-      const draft = await app.services.aiProvider.generatePageDraft(body);
-      const validated = AIPageGenerateResponseSchema.safeParse(draft);
-      if (!validated.success) {
-        return reply.code(500).send({ message: "AI page output format invalid" });
-      }
+        app.log.info("Generating AI page draft...");
+        const draft = await app.services.aiProvider.generatePageDraft(body);
+        app.log.info("AI draft generated successfully");
 
-      const now = nowISO();
-      const normalizedDocument = {
-        ...validated.data.document,
-        id: body.pageId,
-        projectId: body.projectId,
-        status: "draft" as const,
-        version: ownership.version,
-        updatedAt: now,
-      };
+        const validated = AIPageGenerateResponseSchema.safeParse(draft);
+        if (!validated.success) {
+          app.log.error("AI page output validation failed:", validated.error);
+          return reply
+            .code(500)
+            .send({ message: "AI page output format invalid" });
+        }
 
-      await app.services.db.db
-        .insert(aiLogs)
-        .values({
-          id: createId("ailog"),
-          userId: authUser.sub,
+        const now = nowISO();
+        const normalizedDocument = {
+          ...validated.data.document,
+          id: body.pageId,
           projectId: body.projectId,
-          pageId: body.pageId,
-          targetNodeId: "__page__",
-          prompt: body.instruction,
-          responseJson: JSON.stringify({
-            ...validated.data,
-            document: normalizedDocument,
-          }),
-          createdAt: now,
-        })
-        .run();
+          status: "draft" as const,
+          version: ownership.version,
+          updatedAt: now,
+        };
 
-      return {
-        ...validated.data,
-        document: normalizedDocument,
-      };
-    }
+        await app.services.db.db
+          .insert(aiLogs)
+          .values({
+            id: createId("ailog"),
+            userId: authUser.sub,
+            projectId: body.projectId,
+            pageId: body.pageId,
+            targetNodeId: "__page__",
+            prompt: body.instruction,
+            responseJson: JSON.stringify({
+              ...validated.data,
+              document: normalizedDocument,
+            }),
+            createdAt: now,
+          })
+          .run();
+
+        return {
+          ...validated.data,
+          document: normalizedDocument,
+        };
+      } catch (error) {
+        app.log.error("AI page generation failed:", error);
+        return reply.code(500).send({
+          message: "AI page generation failed",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
   );
 };
