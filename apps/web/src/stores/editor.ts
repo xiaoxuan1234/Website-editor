@@ -1,4 +1,4 @@
-﻿import { computed, ref } from "vue";
+import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import {
   createAddNodeCommand,
@@ -17,7 +17,6 @@ import {
   type HistoryState,
 } from "@wg/editor-core";
 import type {
-  AIContentGenerateResponse,
   EditorNode,
   NodeType,
   PageDocumentV2,
@@ -25,7 +24,7 @@ import type {
   Project,
 } from "@wg/schema";
 import { apiClient, type AuthTokens } from "@/lib/api";
-import { createNode, createNodeId, isTextLikeType } from "@/lib/nodes";
+import { createNode, createNodeId } from "@/lib/nodes";
 import {
   mergeResponsiveStylePatch,
   resolveNodeStyleByDevice,
@@ -76,8 +75,9 @@ export const useEditorStore = defineStore("editor", () => {
   const saving = ref(false);
   const initialized = ref(false);
   const publishPreviewUrl = ref<string>("");
-  const aiDraft = ref<AIContentGenerateResponse | null>(null);
-  const aiError = ref<string>("");
+  const aiPageSummary = ref<string>("");
+  const aiPageError = ref<string>("");
+  const aiPageGenerating = ref(false);
   const autoSaveError = ref<string>("");
   const lastSavedAt = ref<string>("");
   const localDraftCandidate = ref<LocalDraftEntry | null>(null);
@@ -112,13 +112,17 @@ export const useEditorStore = defineStore("editor", () => {
     return raw as PageStyle;
   });
 
-  const getNodeStyleByMode = (node: EditorNode, mode: DeviceMode = deviceMode.value) =>
-    resolveNodeStyleByDevice(node, mode);
+  const getNodeStyleByMode = (
+    node: EditorNode,
+    mode: DeviceMode = deviceMode.value,
+  ) => resolveNodeStyleByDevice(node, mode);
 
   const canUndo = computed(() => history.value.canUndo);
   const canRedo = computed(() => history.value.canRedo);
   const isAuthed = computed(() => Boolean(tokens.value?.accessToken));
-  const hasLocalDraftCandidate = computed(() => Boolean(localDraftCandidate.value));
+  const hasLocalDraftCandidate = computed(() =>
+    Boolean(localDraftCandidate.value),
+  );
 
   const cloneDoc = (value: PageDocumentV2): PageDocumentV2 =>
     JSON.parse(JSON.stringify(value)) as PageDocumentV2;
@@ -164,7 +168,10 @@ export const useEditorStore = defineStore("editor", () => {
     writeLocalDraftMap(map);
   };
 
-  const syncLocalDraftCandidate = (pageId: string, serverDoc: PageDocumentV2) => {
+  const syncLocalDraftCandidate = (
+    pageId: string,
+    serverDoc: PageDocumentV2,
+  ) => {
     const map = readLocalDraftMap();
     const candidate = map[pageId];
     if (!candidate) {
@@ -187,7 +194,7 @@ export const useEditorStore = defineStore("editor", () => {
       JSON.stringify({
         user: user.value,
         tokens: tokens.value,
-      })
+      }),
     );
   };
 
@@ -219,13 +226,18 @@ export const useEditorStore = defineStore("editor", () => {
     return tokens.value.accessToken;
   };
 
-  const withRefresh = async <T>(action: (token: string) => Promise<T>): Promise<T> => {
+  const withRefresh = async <T>(
+    action: (token: string) => Promise<T>,
+  ): Promise<T> => {
     try {
       const accessToken = await ensureToken();
       return await action(accessToken);
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      if (!tokens.value || (!message.includes("401") && !message.includes("Unauthorized"))) {
+      if (
+        !tokens.value ||
+        (!message.includes("401") && !message.includes("Unauthorized"))
+      ) {
         throw error;
       }
 
@@ -262,7 +274,7 @@ export const useEditorStore = defineStore("editor", () => {
       executeCommand(
         { doc: doc.value },
         history.value,
-        createUpdateNodeStyleCommand(nodeId, patch)
+        createUpdateNodeStyleCommand(nodeId, patch),
       );
       touchDocument();
       queueAutoSave();
@@ -274,11 +286,15 @@ export const useEditorStore = defineStore("editor", () => {
       return;
     }
 
-    const responsiveStyle = mergeResponsiveStylePatch(node, styleScope.value, patch);
+    const responsiveStyle = mergeResponsiveStylePatch(
+      node,
+      styleScope.value,
+      patch,
+    );
     executeCommand(
       { doc: doc.value },
       history.value,
-      createUpdateNodePropsCommand(nodeId, { responsiveStyle })
+      createUpdateNodePropsCommand(nodeId, { responsiveStyle }),
     );
     touchDocument();
     queueAutoSave();
@@ -300,7 +316,7 @@ export const useEditorStore = defineStore("editor", () => {
           executeCommand(
             { doc: doc.value },
             history.value,
-            createUpdateNodePropsCommand(propsEntry.nodeId, propsEntry.patch)
+            createUpdateNodePropsCommand(propsEntry.nodeId, propsEntry.patch),
           );
           touchDocument();
           queueAutoSave();
@@ -343,7 +359,7 @@ export const useEditorStore = defineStore("editor", () => {
             projectId,
             updatedAt: new Date().toISOString(),
             status: "draft",
-          })
+          }),
         );
         autoSaveError.value = "";
         lastSavedAt.value = new Date().toISOString();
@@ -408,6 +424,9 @@ export const useEditorStore = defineStore("editor", () => {
     currentPageId.value = "";
     doc.value = createEmptyDoc();
     selectedNodeId.value = "";
+    aiPageSummary.value = "";
+    aiPageError.value = "";
+    aiPageGenerating.value = false;
     autoSaveError.value = "";
     lastSavedAt.value = "";
     localDraftCandidate.value = null;
@@ -463,10 +482,14 @@ export const useEditorStore = defineStore("editor", () => {
 
     loading.value = true;
     try {
-      projects.value = await withRefresh((token) => apiClient.getProjects(token));
+      projects.value = await withRefresh((token) =>
+        apiClient.getProjects(token),
+      );
 
       if (projects.value.length === 0) {
-        const created = await withRefresh((token) => apiClient.createProject(token, "默认项目"));
+        const created = await withRefresh((token) =>
+          apiClient.createProject(token, "默认项目"),
+        );
         projects.value = [created];
       }
 
@@ -477,13 +500,13 @@ export const useEditorStore = defineStore("editor", () => {
 
       currentProjectId.value = activeProject.id;
       const projectDetail = await withRefresh((token) =>
-        apiClient.getProject(token, activeProject.id)
+        apiClient.getProject(token, activeProject.id),
       );
       pages.value = projectDetail.pages;
 
       if (pages.value.length === 0) {
         const createdPage = await withRefresh((token) =>
-          apiClient.createPage(token, activeProject.id, "首页")
+          apiClient.createPage(token, activeProject.id, "首页"),
         );
         pages.value = [
           {
@@ -534,7 +557,11 @@ export const useEditorStore = defineStore("editor", () => {
     applyCommand(createDuplicateNodeCommand(nodeId, createNodeId));
   };
 
-  const moveNode = (nodeId: string, toParentId: string | null, toIndex: number) => {
+  const moveNode = (
+    nodeId: string,
+    toParentId: string | null,
+    toIndex: number,
+  ) => {
     applyCommand(createMoveNodeCommand(nodeId, toParentId, toIndex));
   };
 
@@ -569,7 +596,7 @@ export const useEditorStore = defineStore("editor", () => {
   };
 
   const updateSelectedStyle = (
-    patch: Record<string, string | number | boolean | null>
+    patch: Record<string, string | number | boolean | null>,
   ) => {
     const node = selectedNode.value;
     if (!node) {
@@ -607,7 +634,7 @@ export const useEditorStore = defineStore("editor", () => {
     };
 
     const changed = Object.keys(next).some(
-      (key) => pageStyle.value[key] !== next[key]
+      (key) => pageStyle.value[key] !== next[key],
     );
 
     if (!changed) {
@@ -617,7 +644,7 @@ export const useEditorStore = defineStore("editor", () => {
     applyCommand(
       createUpdateDocumentMetaCommand({
         pageStyle: next,
-      })
+      }),
     );
   };
 
@@ -637,74 +664,86 @@ export const useEditorStore = defineStore("editor", () => {
     queueAutoSave();
   };
 
-  const generateAIDraft = async (payload: {
+  const generateAIPage = async (payload: {
     instruction: string;
+    pageType?: string;
+    style?: string;
+    primaryColor?: string;
+    secondaryColor?: string;
+    backgroundColor?: string;
     tone?: string;
     length?: string;
+    complexity?: string;
+    layout?: string;
+    contentFocus?: string;
+    audience?: string;
+    industry?: string;
+    sections?: string[];
     language?: string;
     keywords?: string[];
-  }) => {
-    aiError.value = "";
-    aiDraft.value = null;
-
-    const node = selectedNode.value;
-    if (!node || !isTextLikeType(node.type)) {
-      aiError.value = "当前选中节点不支持 AI 文案生成";
-      return;
-    }
+  }): Promise<boolean> => {
+    flushPendingEdits();
+    aiPageError.value = "";
+    aiPageSummary.value = "";
 
     if (!currentPageId.value || !currentProjectId.value) {
-      aiError.value = "页面上下文未初始化";
-      return;
+      aiPageError.value = "页面上下文未初始化";
+      return false;
     }
 
+    const instruction = payload.instruction.trim();
+    if (!instruction) {
+      aiPageError.value = "请输入网页生成需求";
+      return false;
+    }
+
+    aiPageGenerating.value = true;
     try {
-      aiDraft.value = await withRefresh((token) =>
-        apiClient.generateAI(token, {
+      const result = await withRefresh((token) =>
+        apiClient.generateAIPage(token, {
           projectId: currentProjectId.value,
           pageId: currentPageId.value,
-          targetNodeId: node.id,
-          instruction: payload.instruction,
+          instruction,
+          pageType: payload.pageType,
+          style: payload.style,
+          primaryColor: payload.primaryColor,
+          secondaryColor: payload.secondaryColor,
+          backgroundColor: payload.backgroundColor,
           tone: payload.tone,
           length: payload.length,
+          complexity: payload.complexity,
+          layout: payload.layout,
+          contentFocus: payload.contentFocus,
+          audience: payload.audience,
+          industry: payload.industry,
+          sections: payload.sections,
           language: payload.language,
           keywords: payload.keywords,
-          pageTitle: doc.value.title,
-          currentProps: node.props,
-          nodeType: node.type,
-        })
+        }),
       );
-    } catch (error) {
-      aiError.value = error instanceof Error ? error.message : "AI 生成失败";
-    }
-  };
 
-  const rejectAIDraft = () => {
-    aiDraft.value = null;
-  };
-
-  const applyAIDraft = () => {
-    const draft = aiDraft.value;
-    if (!draft) {
-      return;
-    }
-
-    if (draft.targetNodeId !== selectedNodeId.value) {
-      selectedNodeId.value = draft.targetNodeId;
-    }
-
-    applyCommand(createUpdateNodePropsCommand(draft.targetNodeId, draft.proposedProps));
-
-    const node = findNodeById(doc.value, draft.targetNodeId);
-    if (node) {
-      node.aiMeta = {
-        ...node.aiMeta,
-        lastAppliedAt: new Date().toISOString(),
-        lastPrompt: draft.reasoningSummary,
+      const newDoc = {
+        ...result.document,
+        id: currentPageId.value,
+        projectId: currentProjectId.value,
+        status: "draft" as const,
+        updatedAt: new Date().toISOString(),
       };
-    }
 
-    aiDraft.value = null;
+      doc.value = JSON.parse(JSON.stringify(newDoc));
+      selectedNodeId.value = doc.value.root[0]?.id ?? "";
+      aiPageSummary.value = result.reasoningSummary || "AI 已生成智能网页";
+      resetHistory();
+      touchDocument();
+      queueAutoSave();
+      return true;
+    } catch (error) {
+      aiPageError.value =
+        error instanceof Error ? error.message : "网页生成失败";
+      return false;
+    } finally {
+      aiPageGenerating.value = false;
+    }
   };
 
   const saveNow = async (): Promise<boolean> => {
@@ -722,7 +761,9 @@ export const useEditorStore = defineStore("editor", () => {
 
     saving.value = true;
     try {
-      await withRefresh((token) => apiClient.saveDraft(token, pageId, doc.value));
+      await withRefresh((token) =>
+        apiClient.saveDraft(token, pageId, doc.value),
+      );
       autoSaveError.value = "";
       lastSavedAt.value = new Date().toISOString();
       clearLocalDraftSnapshot(pageId);
@@ -748,7 +789,9 @@ export const useEditorStore = defineStore("editor", () => {
       return null;
     }
 
-    const payload = await withRefresh((token) => apiClient.publish(token, currentPageId.value));
+    const payload = await withRefresh((token) =>
+      apiClient.publish(token, currentPageId.value),
+    );
     publishPreviewUrl.value = payload.previewUrl;
     return payload.previewUrl;
   };
@@ -765,7 +808,7 @@ export const useEditorStore = defineStore("editor", () => {
     }
 
     const preview = await withRefresh((token) =>
-      apiClient.createPreview(token, currentPageId.value)
+      apiClient.createPreview(token, currentPageId.value),
     );
     publishPreviewUrl.value = preview.previewUrl;
     return preview.previewUrl;
@@ -778,13 +821,10 @@ export const useEditorStore = defineStore("editor", () => {
     }
 
     const payload = await withRefresh((token) =>
-      apiClient.exportJson(token, currentPageId.value)
+      apiClient.exportJson(token, currentPageId.value),
     );
 
-    const blob = new Blob([JSON.stringify(payload.document, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(payload.blob);
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = payload.fileName;
@@ -809,8 +849,9 @@ export const useEditorStore = defineStore("editor", () => {
     saving,
     initialized,
     publishPreviewUrl,
-    aiDraft,
-    aiError,
+    aiPageSummary,
+    aiPageError,
+    aiPageGenerating,
     autoSaveError,
     lastSavedAt,
     localDraftCandidate,
@@ -838,9 +879,7 @@ export const useEditorStore = defineStore("editor", () => {
     updatePageStyle,
     undo,
     redo,
-    generateAIDraft,
-    rejectAIDraft,
-    applyAIDraft,
+    generateAIPage,
     saveNow,
     publish,
     createPreview,

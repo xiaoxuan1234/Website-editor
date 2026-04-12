@@ -1,4 +1,4 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 import { PageDocumentV2Schema } from "./editor";
 
 export const UserSchema = z.object({
@@ -64,23 +64,29 @@ export const PublishPageResponseSchema = z.object({
   previewUrl: z.string(),
 });
 
-export const AIContentGenerateRequestSchema = z.object({
+export const AIPageGenerateRequestSchema = z.object({
   projectId: z.string(),
   pageId: z.string(),
-  targetNodeId: z.string(),
   instruction: z.string().min(1),
+  pageType: z.string().optional(),
+  style: z.string().optional(),
+  primaryColor: z.string().optional(),
+  secondaryColor: z.string().optional(),
+  backgroundColor: z.string().optional(),
   tone: z.string().optional(),
   length: z.string().optional(),
   language: z.string().optional(),
   keywords: z.array(z.string()).optional(),
-  pageTitle: z.string().optional(),
-  currentProps: z.record(z.string(), z.any()),
-  nodeType: z.string(),
+  complexity: z.string().optional(),
+  layout: z.string().optional(),
+  contentFocus: z.string().optional(),
+  audience: z.string().optional(),
+  industry: z.string().optional(),
+  sections: z.array(z.string()).optional(),
 });
 
-export const AIContentGenerateResponseSchema = z.object({
-  targetNodeId: z.string(),
-  proposedProps: z.record(z.string(), z.any()),
+export const AIPageGenerateResponseSchema = z.object({
+  document: PageDocumentV2Schema,
   reasoningSummary: z.string(),
   safetyFlags: z.array(z.string()),
 });
@@ -99,5 +105,7 @@ export type AuthLoginRequest = z.infer<typeof AuthLoginRequestSchema>;
 export type AuthLoginResponse = z.infer<typeof AuthLoginResponseSchema>;
 export type Project = z.infer<typeof ProjectSchema>;
 export type PageSummary = z.infer<typeof PageSummarySchema>;
-export type AIContentGenerateRequest = z.infer<typeof AIContentGenerateRequestSchema>;
-export type AIContentGenerateResponse = z.infer<typeof AIContentGenerateResponseSchema>;
+export type AIPageGenerateRequest = z.infer<typeof AIPageGenerateRequestSchema>;
+export type AIPageGenerateResponse = z.infer<
+  typeof AIPageGenerateResponseSchema
+>;

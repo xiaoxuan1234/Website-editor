@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <component
     :is="headingTag"
     ref="editableRef"
@@ -10,9 +10,8 @@
     @focus="handleSelect"
     @blur="handleBlur"
     @keydown.enter.prevent="handleEnter"
-  >
-    {{ content }}
-  </component>
+    v-html="content"
+  />
 </template>
 
 <script setup lang="ts">
@@ -47,8 +46,7 @@ const commitValue = () => {
     return;
   }
 
-  const next = host.innerText.replace(/\r?\n/g, "").trim() || "标题文本";
-  host.innerText = next;
+  const next = host.innerHTML.trim() || "标题文本";
 
   if (next !== content.value) {
     editorStore.selectNode(props.node.id);
@@ -72,8 +70,8 @@ watch(
       return;
     }
 
-    if (document.activeElement !== host && host.innerText !== value) {
-      host.innerText = value;
+    if (document.activeElement !== host && host.innerHTML !== value) {
+      host.innerHTML = value;
     }
   },
   { immediate: true }

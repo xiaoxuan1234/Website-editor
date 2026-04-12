@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <aside class="wg-palette">
     <div class="panel-body">
       <nav class="module-nav">
@@ -20,7 +20,12 @@
         <div class="library-title">{{ activeModuleLabel }}</div>
 
         <template v-if="active === 'elements'">
-          <el-input v-model="keyword" class="search" clearable placeholder="搜索组件">
+          <el-input
+            v-model="keyword"
+            class="search"
+            clearable
+            placeholder="搜索组件"
+          >
             <template #prefix>
               <el-icon><Search /></el-icon>
             </template>
@@ -43,11 +48,15 @@
             </div>
           </div>
 
-          <div v-if="filteredElements.length === 0" class="placeholder">未找到匹配组件</div>
+          <div v-if="filteredElements.length === 0" class="placeholder">
+            未找到匹配组件
+          </div>
         </template>
 
         <template v-else-if="active === 'layers'">
-          <div v-if="layerItems.length === 0" class="placeholder">当前没有图层</div>
+          <div v-if="layerItems.length === 0" class="placeholder">
+            当前没有图层
+          </div>
 
           <div v-else class="layer-list">
             <div
@@ -58,9 +67,11 @@
                 active: item.id === editorStore.selectedNodeId,
                 'dragging-source': item.id === draggingLayerNodeId,
                 'drop-before':
-                  layerDropTarget?.anchorId === item.id && layerDropTarget?.placement === 'before',
+                  layerDropTarget?.anchorId === item.id &&
+                  layerDropTarget?.placement === 'before',
                 'drop-after':
-                  layerDropTarget?.anchorId === item.id && layerDropTarget?.placement === 'after',
+                  layerDropTarget?.anchorId === item.id &&
+                  layerDropTarget?.placement === 'after',
               }"
               :style="{ paddingLeft: `${item.depth * 14 + 8}px` }"
               :draggable="!previewMode"
@@ -81,7 +92,10 @@
               </button>
               <span v-else class="layer-toggle placeholder-toggle"></span>
 
-              <i class="iconfont layer-icon" :class="typeIconMap[item.type] || 'icon-danhangwenben'"></i>
+              <i
+                class="iconfont layer-icon"
+                :class="typeIconMap[item.type] || 'icon-danhangwenben'"
+              ></i>
               <span class="layer-name">{{ typeLabelMap[item.type] }}</span>
               <span class="layer-id">{{ item.id.slice(-6) }}</span>
 
@@ -128,48 +142,238 @@
 
         <template v-else-if="active === 'ai'">
           <div class="ai-chat-panel">
-            <div class="ai-chat-sub">选中文本类元素后，输入需求即可生成文案草案</div>
+            <section class="ai-section">
+              <div class="ai-section-title">AI智能网页生成</div>
+              <div class="ai-chat-sub">
+                根据您的需求生成完整的网页结构，支持自定义风格和布局。
+              </div>
 
-            <el-input
-              v-model="aiInstruction"
-              type="textarea"
-              :rows="5"
-              placeholder="例如：把这段介绍改成更口语、更有说服力"
-              :disabled="previewMode"
-            />
+              <el-input
+                v-model="aiPageInstruction"
+                type="textarea"
+                :rows="4"
+                placeholder="详细描述您想要的网页，例如：生成一个科技公司的产品介绍页，现代风格，蓝色主题，包含英雄区、功能介绍和联系表单。"
+                :disabled="previewMode"
+              />
 
-            <div class="ai-chat-actions">
-              <el-button
-                type="primary"
-                :loading="aiLoading"
-                :disabled="previewMode || !aiSupported || !aiInstruction.trim()"
-                @click="askAI"
+              <el-divider content-position="left" style="margin: 8px 0"
+                >基础配置</el-divider
               >
-                发送
-              </el-button>
-              <el-button
-                :disabled="previewMode || !editorStore.aiDraft"
-                @click="editorStore.applyAIDraft()"
-              >
-                应用草案
-              </el-button>
-              <el-button
-                :disabled="previewMode || !editorStore.aiDraft"
-                @click="editorStore.rejectAIDraft()"
-              >
-                清空
-              </el-button>
-            </div>
+              <div class="ai-options-grid">
+                <el-form label-width="80px" size="small">
+                  <el-form-item label="页面类型">
+                    <el-select
+                      v-model="aiPageOptions.pageType"
+                      placeholder="选择页面类型"
+                    >
+                      <el-option label="首页" value="home" />
+                      <el-option label="产品页" value="product" />
+                      <el-option label="联系页" value="contact" />
+                      <el-option label="着陆页" value="landing" />
+                      <el-option label="作品集" value="portfolio" />
+                      <el-option label="企业官网" value="business" />
+                    </el-select>
+                  </el-form-item>
 
-            <div v-if="!aiSupported" class="hint">
-              请先在画布中选中文本、标题、段落、按钮或超链接元素。
-            </div>
-            <div v-if="editorStore.aiError" class="error">{{ editorStore.aiError }}</div>
+                  <el-form-item label="设计风格">
+                    <el-select
+                      v-model="aiPageOptions.style"
+                      placeholder="选择设计风格"
+                    >
+                      <el-option label="现代简约" value="modern" />
+                      <el-option label="商务专业" value="business" />
+                      <el-option label="创意个性" value="creative" />
+                      <el-option label="科技感" value="tech" />
+                      <el-option label="温暖友好" value="friendly" />
+                      <el-option label="极简主义" value="minimal" />
+                      <el-option label="复古风格" value="retro" />
+                      <el-option label="奢华高端" value="luxury" />
+                    </el-select>
+                  </el-form-item>
 
-            <div v-if="editorStore.aiDraft" class="ai-draft">
-              <div class="ai-draft-title">AI 回复</div>
-              <div class="ai-draft-summary">{{ editorStore.aiDraft.reasoningSummary }}</div>
-            </div>
+                  <el-form-item label="语气风格">
+                    <el-select
+                      v-model="aiPageOptions.tone"
+                      placeholder="选择语气"
+                    >
+                      <el-option label="专业正式" value="professional" />
+                      <el-option label="轻松友好" value="friendly" />
+                      <el-option label="活力激情" value="energetic" />
+                      <el-option label="优雅精致" value="elegant" />
+                      <el-option label="简洁直接" value="concise" />
+                    </el-select>
+                  </el-form-item>
+                </el-form>
+              </div>
+
+              <el-divider content-position="left" style="margin: 8px 0"
+                >配色方案</el-divider
+              >
+              <div class="ai-options-grid">
+                <el-form label-width="80px" size="small">
+                  <el-form-item label="主色调">
+                    <el-color-picker
+                      v-model="aiPageOptions.primaryColor"
+                      show-alpha
+                    />
+                  </el-form-item>
+
+                  <el-form-item label="辅助色">
+                    <el-color-picker
+                      v-model="aiPageOptions.secondaryColor"
+                      show-alpha
+                    />
+                  </el-form-item>
+
+                  <el-form-item label="背景色">
+                    <el-color-picker
+                      v-model="aiPageOptions.backgroundColor"
+                      show-alpha
+                    />
+                  </el-form-item>
+                </el-form>
+              </div>
+
+              <el-divider content-position="left" style="margin: 8px 0"
+                >页面结构</el-divider
+              >
+              <div class="ai-options-grid">
+                <el-form label-width="80px" size="small">
+                  <el-form-item label="页面长度">
+                    <el-select
+                      v-model="aiPageOptions.length"
+                      placeholder="选择页面长度"
+                    >
+                      <el-option label="短 (1-2屏)" value="short" />
+                      <el-option label="中 (3-4屏)" value="medium" />
+                      <el-option label="长 (5+屏)" value="long" />
+                    </el-select>
+                  </el-form-item>
+
+                  <el-form-item label="复杂度">
+                    <el-select
+                      v-model="aiPageOptions.complexity"
+                      placeholder="选择复杂度"
+                    >
+                      <el-option label="简洁" value="simple" />
+                      <el-option label="适中" value="medium" />
+                      <el-option label="丰富" value="complex" />
+                    </el-select>
+                  </el-form-item>
+
+                  <el-form-item label="布局方式">
+                    <el-select
+                      v-model="aiPageOptions.layout"
+                      placeholder="选择布局"
+                    >
+                      <el-option label="现代布局" value="modern" />
+                      <el-option label="传统布局" value="classic" />
+                      <el-option label="卡片式" value="card" />
+                      <el-option label="单栏式" value="single" />
+                    </el-select>
+                  </el-form-item>
+                </el-form>
+              </div>
+
+              <el-divider content-position="left" style="margin: 8px 0"
+                >内容区块</el-divider
+              >
+              <div class="ai-options-grid">
+                <div class="section-checklist">
+                  <div class="section-row">
+                    <el-checkbox
+                      v-for="section in sectionPresets"
+                      :key="section.value"
+                      v-model="section.checked"
+                    >
+                      {{ section.label }}
+                    </el-checkbox>
+                  </div>
+                </div>
+              </div>
+
+              <el-divider content-position="left" style="margin: 8px 0"
+                >行业与受众</el-divider
+              >
+              <div class="ai-options-grid">
+                <el-form label-width="80px" size="small">
+                  <el-form-item label="所属行业">
+                    <el-select
+                      v-model="aiPageOptions.industry"
+                      placeholder="选择行业"
+                      clearable
+                    >
+                      <el-option label="科技互联网" value="tech" />
+                      <el-option label="教育培训" value="education" />
+                      <el-option label="金融理财" value="finance" />
+                      <el-option label="医疗健康" value="healthcare" />
+                      <el-option label="电商零售" value="ecommerce" />
+                      <el-option label="文化传媒" value="media" />
+                      <el-option label="旅游出行" value="travel" />
+                      <el-option label="房地产" value="realestate" />
+                      <el-option label="制造业" value="manufacturing" />
+                      <el-option label="餐饮美食" value="food" />
+                    </el-select>
+                  </el-form-item>
+
+                  <el-form-item label="目标受众">
+                    <el-select
+                      v-model="aiPageOptions.audience"
+                      placeholder="选择受众"
+                      clearable
+                    >
+                      <el-option label="企业客户 (B2B)" value="b2b" />
+                      <el-option label="个人消费者 (B2C)" value="b2c" />
+                      <el-option label="年轻群体" value="young" />
+                      <el-option label="中年群体" value="middle" />
+                      <el-option label="高端用户" value="premium" />
+                      <el-option label="大众市场" value="mass" />
+                    </el-select>
+                  </el-form-item>
+
+                  <el-form-item label="内容重点">
+                    <el-select
+                      v-model="aiPageOptions.contentFocus"
+                      placeholder="选择重点"
+                      clearable
+                    >
+                      <el-option label="产品展示" value="product" />
+                      <el-option label="服务介绍" value="service" />
+                      <el-option label="品牌故事" value="brand" />
+                      <el-option label="信息传达" value="info" />
+                      <el-option label="线索获取" value="leads" />
+                      <el-option label="销售转化" value="sales" />
+                    </el-select>
+                  </el-form-item>
+                </el-form>
+              </div>
+
+              <div class="ai-chat-actions">
+                <el-button
+                  type="primary"
+                  :loading="editorStore.aiPageGenerating"
+                  :disabled="previewMode || !aiPageInstruction.trim()"
+                  @click="generateAIPage"
+                >
+                  {{
+                    editorStore.aiPageGenerating ? "生成中…" : "智能生成网页"
+                  }}
+                </el-button>
+                <div class="ai-tip">
+                  未配置 API Key 时将根据描述自动选择模板生成
+                </div>
+              </div>
+
+              <div v-if="editorStore.aiPageSummary" class="ai-draft">
+                <div class="ai-draft-title">生成说明</div>
+                <div class="ai-draft-summary">
+                  {{ editorStore.aiPageSummary }}
+                </div>
+              </div>
+              <div v-if="editorStore.aiPageError" class="error">
+                {{ editorStore.aiPageError }}
+              </div>
+            </section>
           </div>
         </template>
 
@@ -182,8 +386,9 @@
 <script setup lang="ts">
 import { computed, ref, type Component } from "vue";
 import { ChatDotRound, Files, Plus, Search } from "@element-plus/icons-vue";
+import { ElMessage } from "element-plus";
 import type { EditorNode, NodeType, PaletteElement } from "@wg/schema";
-import { isTextLikeType, paletteElements } from "@/lib/nodes";
+import { paletteElements } from "@/lib/nodes";
 import { useEditorStore } from "@/stores/editor";
 
 defineProps<{ previewMode: boolean }>();
@@ -196,10 +401,66 @@ const modules: Array<{ key: string; label: string; icon: Component }> = [
 
 const active = ref("elements");
 const keyword = ref("");
-const aiInstruction = ref("");
-const aiLoading = ref(false);
+const aiPageInstruction = ref("");
 const collapsedLayers = ref<Set<string>>(new Set());
 const editorStore = useEditorStore();
+
+const aiPageOptions = ref({
+  pageType: "",
+  style: "",
+  primaryColor: "#3366ff",
+  secondaryColor: "#666666",
+  backgroundColor: "#ffffff",
+  tone: "",
+  length: "medium",
+  complexity: "medium",
+  layout: "modern",
+  contentFocus: "",
+  audience: "",
+  industry: "",
+  sections: [] as string[],
+});
+
+const sectionPresets = ref([
+  { label: "英雄区", value: "hero", checked: true },
+  { label: "特性介绍", value: "features", checked: true },
+  { label: "关于我们", value: "about", checked: true },
+  { label: "服务介绍", value: "services", checked: true },
+  { label: "团队介绍", value: "team", checked: false },
+  { label: "客户评价", value: "testimonials", checked: false },
+  { label: "作品展示", value: "gallery", checked: false },
+  { label: "常见问题", value: "faq", checked: false },
+  { label: "联系表单", value: "contact", checked: false },
+  { label: "行动号召", value: "cta", checked: true },
+]);
+
+const generateAIPage = async () => {
+  const selectedSections = sectionPresets.value
+    .filter((s) => s.checked)
+    .map((s) => s.value);
+
+  const success = await editorStore.generateAIPage({
+    instruction: aiPageInstruction.value.trim(),
+    pageType: aiPageOptions.value.pageType || undefined,
+    style: aiPageOptions.value.style || undefined,
+    primaryColor: aiPageOptions.value.primaryColor || undefined,
+    secondaryColor: aiPageOptions.value.secondaryColor || undefined,
+    backgroundColor: aiPageOptions.value.backgroundColor || undefined,
+    tone: aiPageOptions.value.tone || undefined,
+    length: aiPageOptions.value.length || undefined,
+    complexity: aiPageOptions.value.complexity || undefined,
+    layout: aiPageOptions.value.layout || undefined,
+    contentFocus: aiPageOptions.value.contentFocus || undefined,
+    audience: aiPageOptions.value.audience || undefined,
+    industry: aiPageOptions.value.industry || undefined,
+    sections: selectedSections.length > 0 ? selectedSections : undefined,
+  });
+  if (success) {
+    ElMessage.success("智能网页已生成并替换");
+  } else {
+    ElMessage.error(editorStore.aiPageError || "网页生成失败");
+  }
+};
 
 type LayerItem = {
   id: string;
@@ -259,18 +520,15 @@ const filteredElements = computed(() => {
   }
 
   return paletteElements.filter(
-    (item) => item.label.toLowerCase().includes(query) || item.type.toLowerCase().includes(query)
+    (item) =>
+      item.label.toLowerCase().includes(query) ||
+      item.type.toLowerCase().includes(query),
   );
 });
 
 const activeModuleLabel = computed(
-  () => modules.find((item) => item.key === active.value)?.label ?? ""
+  () => modules.find((item) => item.key === active.value)?.label ?? "",
 );
-
-const aiSupported = computed(() => {
-  const node = editorStore.selectedNode;
-  return Boolean(node && isTextLikeType(node.type));
-});
 
 const isCollapsed = (id: string) => collapsedLayers.value.has(id);
 
@@ -287,7 +545,11 @@ const toggleLayer = (id: string) => {
 const layerItems = computed<LayerItem[]>(() => {
   const result: LayerItem[] = [];
 
-  const walk = (nodes: EditorNode[], depth: number, parentId: string | null) => {
+  const walk = (
+    nodes: EditorNode[],
+    depth: number,
+    parentId: string | null,
+  ) => {
     nodes.forEach((node, index) => {
       const isContainer = node.type === "container";
       result.push({
@@ -332,7 +594,7 @@ const parseMovePayload = (event: DragEvent): { nodeId: string } | null => {
 const findNodeLocation = (
   nodes: EditorNode[],
   nodeId: string,
-  parentId: string | null = null
+  parentId: string | null = null,
 ): NodeLocation | null => {
   for (let index = 0; index < nodes.length; index += 1) {
     const node = nodes[index];
@@ -366,7 +628,7 @@ const containsNodeId = (node: EditorNode, targetId: string): boolean => {
 const normalizeMoveIndex = (
   source: NodeLocation,
   toParentId: string | null,
-  toIndex: number
+  toIndex: number,
 ) => {
   let nextIndex = Math.max(0, toIndex);
   if (source.parentId === toParentId && source.index < nextIndex) {
@@ -378,7 +640,7 @@ const normalizeMoveIndex = (
 const isInvalidMoveTarget = (
   nodeId: string,
   toParentId: string | null,
-  toIndex: number
+  toIndex: number,
 ): boolean => {
   const source = findNodeLocation(editorStore.doc.root, nodeId);
   if (!source) {
@@ -400,7 +662,7 @@ const clearLayerDrag = () => {
 
 const resolveRowDropTarget = (
   event: DragEvent,
-  item: LayerItem
+  item: LayerItem,
 ): LayerDropTarget | null => {
   const host = event.currentTarget as HTMLElement | null;
   if (!host) {
@@ -419,70 +681,54 @@ const resolveRowDropTarget = (
   };
 };
 
-const moveLayer = (item: LayerItem, direction: -1 | 1) => {
-  const targetIndex = item.index + direction;
+const moveLayer = (item: LayerItem, offset: -1 | 1) => {
+  const targetIndex = item.index + offset;
   if (targetIndex < 0 || targetIndex >= item.siblingCount) {
     return;
   }
-
   editorStore.moveNode(item.id, item.parentId, targetIndex);
   editorStore.selectNode(item.id);
 };
 
 const onLayerDragStart = (event: DragEvent, item: LayerItem) => {
-  if (editorStore.previewMode || !event.dataTransfer) {
+  if (!event.dataTransfer) {
     return;
   }
 
   const payload = JSON.stringify({ nodeId: item.id });
+  draggingLayerNodeId.value = item.id;
+  layerDropTarget.value = null;
   event.dataTransfer.effectAllowed = "move";
   event.dataTransfer.setData("application/x-edit-node", payload);
   event.dataTransfer.setData("text/plain", payload);
-  draggingLayerNodeId.value = item.id;
-  layerDropTarget.value = null;
 };
 
 const onLayerDragOver = (event: DragEvent, item: LayerItem) => {
-  if (editorStore.previewMode) {
-    return;
-  }
-
-  const payloadNodeId = parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
-  if (!payloadNodeId) {
-    return;
-  }
-
-  if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = "move";
-  }
-
-  const nextTarget = resolveRowDropTarget(event, item);
-  if (!nextTarget) {
-    return;
-  }
-
-  if (isInvalidMoveTarget(payloadNodeId, nextTarget.parentId, nextTarget.index)) {
+  const payloadNodeId =
+    parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
+  if (!payloadNodeId || payloadNodeId === item.id) {
     layerDropTarget.value = null;
     return;
   }
 
-  layerDropTarget.value = nextTarget;
+  const target = resolveRowDropTarget(event, item);
+  if (
+    !target ||
+    isInvalidMoveTarget(payloadNodeId, target.parentId, target.index)
+  ) {
+    layerDropTarget.value = null;
+    return;
+  }
+
+  event.dataTransfer!.dropEffect = "move";
+  layerDropTarget.value = target;
 };
 
 const onLayerDrop = (event: DragEvent, item: LayerItem) => {
-  if (editorStore.previewMode) {
-    clearLayerDrag();
-    return;
-  }
-
-  const payloadNodeId = parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
-  if (!payloadNodeId) {
-    clearLayerDrag();
-    return;
-  }
-
-  const nextTarget = resolveRowDropTarget(event, item);
-  if (!nextTarget || isInvalidMoveTarget(payloadNodeId, nextTarget.parentId, nextTarget.index)) {
+  const payloadNodeId =
+    parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
+  const target = resolveRowDropTarget(event, item);
+  if (!payloadNodeId || !target) {
     clearLayerDrag();
     return;
   }
@@ -493,53 +739,53 @@ const onLayerDrop = (event: DragEvent, item: LayerItem) => {
     return;
   }
 
-  const targetIndex = normalizeMoveIndex(source, nextTarget.parentId, nextTarget.index);
-  if (source.parentId === nextTarget.parentId && source.index === targetIndex) {
+  const targetIndex = normalizeMoveIndex(source, target.parentId, target.index);
+  if (source.parentId === target.parentId && source.index === targetIndex) {
     clearLayerDrag();
     return;
   }
 
-  editorStore.moveNode(payloadNodeId, nextTarget.parentId, targetIndex);
+  editorStore.moveNode(payloadNodeId, target.parentId, targetIndex);
   editorStore.selectNode(payloadNodeId);
   clearLayerDrag();
 };
 
 const onLayerTailDragOver = (event: DragEvent) => {
-  if (editorStore.previewMode) {
-    return;
-  }
-
-  const payloadNodeId = parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
+  const payloadNodeId =
+    parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
   if (!payloadNodeId) {
+    layerDropTarget.value = null;
     return;
   }
 
-  if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = "move";
+  const source = findNodeLocation(editorStore.doc.root, payloadNodeId);
+  if (!source) {
+    layerDropTarget.value = null;
+    return;
   }
 
-  const nextTarget: LayerDropTarget = {
+  const targetIndex = normalizeMoveIndex(
+    source,
+    null,
+    editorStore.doc.root.length,
+  );
+  if (source.parentId === null && source.index === targetIndex) {
+    layerDropTarget.value = null;
+    return;
+  }
+
+  event.dataTransfer!.dropEffect = "move";
+  layerDropTarget.value = {
     anchorId: tailAnchorId,
     parentId: null,
     index: editorStore.doc.root.length,
     placement: "after",
   };
-
-  if (isInvalidMoveTarget(payloadNodeId, nextTarget.parentId, nextTarget.index)) {
-    layerDropTarget.value = null;
-    return;
-  }
-
-  layerDropTarget.value = nextTarget;
 };
 
 const onLayerTailDrop = (event: DragEvent) => {
-  if (editorStore.previewMode) {
-    clearLayerDrag();
-    return;
-  }
-
-  const payloadNodeId = parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
+  const payloadNodeId =
+    parseMovePayload(event)?.nodeId ?? draggingLayerNodeId.value;
   if (!payloadNodeId) {
     clearLayerDrag();
     return;
@@ -551,7 +797,11 @@ const onLayerTailDrop = (event: DragEvent) => {
     return;
   }
 
-  const targetIndex = normalizeMoveIndex(source, null, editorStore.doc.root.length);
+  const targetIndex = normalizeMoveIndex(
+    source,
+    null,
+    editorStore.doc.root.length,
+  );
   if (source.parentId === null && source.index === targetIndex) {
     clearLayerDrag();
     return;
@@ -576,23 +826,7 @@ const onDragStart = (event: DragEvent, item: PaletteElement) => {
   event.dataTransfer.setData("application/x-edit-element", payload);
   event.dataTransfer.setData("text/plain", payload);
 };
-
-const askAI = async () => {
-  if (!aiSupported.value || !aiInstruction.value.trim()) {
-    return;
-  }
-
-  aiLoading.value = true;
-  try {
-    await editorStore.generateAIDraft({
-      instruction: aiInstruction.value.trim(),
-    });
-  } finally {
-    aiLoading.value = false;
-  }
-};
 </script>
-
 <style scoped>
 .wg-palette {
   --vv-bg: #eceff3;
@@ -720,7 +954,10 @@ const askAI = async () => {
   justify-content: center;
   align-items: center;
   gap: 7px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
 
 .element-box:hover {
@@ -762,23 +999,93 @@ const askAI = async () => {
   gap: 10px;
 }
 
+.ai-section {
+  border: 1px solid #d6dde8;
+  border-radius: 10px;
+  background: #f8fafd;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ai-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #3d4c67;
+}
+
 .ai-chat-sub {
   font-size: 12px;
   color: #6d788f;
 }
 
+.ai-options-grid {
+  margin: 10px 0;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fafafa;
+}
+
+.ai-options-grid :deep(.el-form) {
+  width: 100%;
+}
+
+.ai-options-grid :deep(.el-form-item) {
+  margin-bottom: 10px;
+}
+
+.ai-options-grid :deep(.el-select),
+.ai-options-grid :deep(.el-color-picker) {
+  width: 100%;
+}
+
+.section-checklist {
+  width: 100%;
+}
+
+.section-checklist :deep(.el-checkbox-group) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.section-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.section-row :deep(.el-checkbox) {
+  margin-right: 0;
+  margin-bottom: 4px;
+}
+
+.section-row :deep(.el-checkbox__label) {
+  font-size: 12px;
+}
+
 .ai-chat-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  margin-top: 10px;
 }
 
 .ai-chat-actions :deep(.el-button) {
   border-radius: 8px;
+  width: 100%;
 }
 
-.hint {
-  color: #66738c;
-  font-size: 12px;
+.ai-tip {
+  width: 100%;
+  font-size: 11px;
+  color: #738099;
+  margin-top: 6px;
+  line-height: 1.4;
 }
 
 .error {
@@ -937,7 +1244,9 @@ const askAI = async () => {
   height: 14px;
   border: 1px dashed transparent;
   border-radius: 6px;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .layer-tail-drop.active {
