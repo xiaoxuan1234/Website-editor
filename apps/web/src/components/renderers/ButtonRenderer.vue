@@ -1,7 +1,14 @@
 ﻿<template>
   <button
     class="btn"
-    :class="[`variant-${buttonVariant}`, `size-${buttonSize}`, { disabled: buttonDisabled }]"
+    :class="[
+      `variant-${buttonVariant}`,
+      `size-${buttonSize}`,
+      {
+        disabled: buttonDisabled,
+        'suppress-inner-chrome': hasOuterChrome,
+      },
+    ]"
     type="button"
     :disabled="buttonDisabled"
     @click.stop="handleClick"
@@ -26,6 +33,12 @@ import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import type { EditorNode } from "@wg/schema";
 import { useEditorStore } from "@/stores/editor";
+import {
+  readResponsiveStyleMap,
+  resolveNodeStyleByDevice,
+  type DeviceMode,
+  type StyleRecord,
+} from "@/lib/style";
 
 const props = defineProps<{ node: EditorNode }>();
 
@@ -44,6 +57,96 @@ const buttonSize = computed(() => {
 });
 const buttonDisabled = computed(() => Boolean(props.node.props.disabled ?? false));
 const editable = computed(() => !editorStore.previewMode && !route.path.startsWith("/preview/"));
+const currentDeviceMode = computed<DeviceMode>(() => {
+  if (route.path.startsWith("/preview/")) {
+    const value = String(route.query.device ?? "desktop");
+    if (value === "tablet" || value === "mobile") {
+      return value;
+    }
+    return "desktop";
+  }
+  return editorStore.deviceMode;
+});
+const hasVisibleBorderValue = (value: unknown): boolean => {
+  if (value === undefined || value === null) {
+    return false;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized === "none" || normalized === "0" || normalized === "0px") {
+    return false;
+  }
+  return true;
+};
+const hasVisibleSpacingValue = (value: unknown): boolean => {
+  if (value === undefined || value === null) {
+    return false;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized === "0" || normalized === "0px") {
+    return false;
+  }
+  return true;
+};
+const hasVisibleBackgroundValue = (value: unknown): boolean => {
+  if (value === undefined || value === null) {
+    return false;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return normalized !== "none" && normalized !== "transparent";
+};
+const hasOuterChromeInStyle = (style: StyleRecord): boolean => {
+  const borderKeys = [
+    "border",
+    "borderWidth",
+    "borderTop",
+    "borderRight",
+    "borderBottom",
+    "borderLeft",
+    "borderTopWidth",
+    "borderRightWidth",
+    "borderBottomWidth",
+    "borderLeftWidth",
+  ] as const;
+  const spacingKeys = [
+    "padding",
+    "paddingTop",
+    "paddingRight",
+    "paddingBottom",
+    "paddingLeft",
+  ] as const;
+  const backgroundKeys = ["background", "backgroundColor", "backgroundImage"] as const;
+  const shadowKeys = ["boxShadow"] as const;
+  return (
+    borderKeys.some((key) => hasVisibleBorderValue(style[key])) ||
+    spacingKeys.some((key) => hasVisibleSpacingValue(style[key])) ||
+    backgroundKeys.some((key) => hasVisibleBackgroundValue(style[key])) ||
+    shadowKeys.some((key) => hasVisibleBackgroundValue(style[key]))
+  );
+};
+const hasOuterChrome = computed(() => {
+  const currentStyle = resolveNodeStyleByDevice(props.node, currentDeviceMode.value);
+  if (hasOuterChromeInStyle(currentStyle)) {
+    return true;
+  }
+
+  const responsiveStyleMap = readResponsiveStyleMap(props.node);
+  const responsiveStyles = Object.values(responsiveStyleMap);
+  if (responsiveStyles.some((style) => hasOuterChromeInStyle(style))) {
+    return true;
+  }
+
+  const baseStyle = (props.node.style ?? {}) as StyleRecord;
+  return hasOuterChromeInStyle(baseStyle);
+});
 
 const handleSelect = () => {
   if (!editable.value) {
@@ -111,6 +214,7 @@ watch(
   border-radius: inherit;
   background: transparent;
   color: inherit;
+  max-width: 100%;
   padding: 9px 16px;
   font-size: 14px;
   font-weight: 600;
@@ -155,8 +259,25 @@ watch(
   cursor: not-allowed;
 }
 
+.btn.suppress-inner-chrome {
+  border-color: transparent;
+  background: transparent;
+  padding: 0;
+}
+
+.btn.suppress-inner-chrome.variant-primary,
+.btn.suppress-inner-chrome.variant-outline,
+.btn.suppress-inner-chrome.variant-soft {
+  border-color: transparent;
+  background: transparent;
+}
+
 .btn-text {
   display: inline-block;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .btn-text.editable {

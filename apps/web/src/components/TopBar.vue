@@ -3,8 +3,47 @@
     <div class="project">
       <div class="brand"><span>WG</span></div>
       <div class="project-info">
-        <div class="project-name">项目：{{ editorStore.doc.title || "未命名页面" }}</div>
+        <div class="project-name-row">
+          <el-dropdown trigger="click" :hide-on-click="false" @command="onProjectMenuCommand">
+            <button class="project-switch-btn" type="button" :disabled="projectActionLoading">
+              <span class="project-name">项目：{{ currentProjectName }}</span>
+              <el-icon class="project-switch-icon"><ArrowDown /></el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu class="project-dropdown-menu">
+                <el-dropdown-item
+                  v-for="project in editorStore.projects"
+                  :key="project.id"
+                  :command="`switch:${project.id}`"
+                  :disabled="projectActionLoading || project.id === editorStore.currentProjectId"
+                >
+                  {{ project.name }}
+                </el-dropdown-item>
+                <el-dropdown-item
+                  divided
+                  command="create"
+                  :disabled="projectActionLoading"
+                >
+                  新增项目
+                </el-dropdown-item>
+                <el-dropdown-item
+                  command="rename"
+                  :disabled="projectActionLoading || !editorStore.currentProjectId"
+                >
+                  编辑项目名
+                </el-dropdown-item>
+                <el-dropdown-item
+                  command="delete"
+                  :disabled="projectActionLoading || !editorStore.currentProjectId"
+                >
+                  删除当前项目
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
         <div class="project-meta-line">
+          <div class="project-page">页面：{{ editorStore.doc.title || "未命名页面" }}</div>
           <div
             v-if="saveStateText"
             class="save-state"
@@ -86,8 +125,9 @@
 </template>
 
 <script setup lang="ts">
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import {
+  ArrowDown,
   Cellphone,
   CopyDocument,
   Delete,
@@ -96,12 +136,16 @@ import {
   RefreshLeft,
   RefreshRight,
 } from "@element-plus/icons-vue";
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useEditorStore } from "@/stores/editor";
 
 const editorStore = useEditorStore();
+const projectActionLoading = ref(false);
 
 const userInitial = computed(() => (editorStore.user?.username?.slice(0, 1) ?? "U").toUpperCase());
+const currentProjectName = computed(
+  () => editorStore.currentProject?.name || "未命名项目"
+);
 const saveStateText = computed(() => {
   if (editorStore.autoSaveError) {
     return editorStore.autoSaveError;
@@ -115,6 +159,149 @@ const saveStateText = computed(() => {
   }
   return `已保存 ${date.toLocaleTimeString()}`;
 });
+
+const runProjectAction = async (action: () => Promise<void>) => {
+  if (projectActionLoading.value) {
+    return;
+  }
+
+  projectActionLoading.value = true;
+  try {
+    await action();
+  } finally {
+    projectActionLoading.value = false;
+  }
+};
+
+const switchProjectById = async (projectId: string) => {
+  const target = editorStore.projects.find((project) => project.id === projectId);
+  if (!target || target.id === editorStore.currentProjectId) {
+    return;
+  }
+
+  await runProjectAction(async () => {
+    const switched = await editorStore.switchProject(projectId);
+    if (!switched) {
+      ElMessage.error(editorStore.autoSaveError || "切换项目失败");
+      return;
+    }
+    ElMessage.success(`已切换到项目：${target.name}`);
+  });
+};
+
+const createProjectFromPrompt = async () => {
+  await runProjectAction(async () => {
+    const promptResult = await ElMessageBox.prompt("请输入新项目名称", "新增项目", {
+      confirmButtonText: "创建并切换",
+      cancelButtonText: "取消",
+      inputPlaceholder: "例如：官网改版",
+      inputValue: "新项目",
+    });
+
+    const name = String((promptResult as { value?: string }).value ?? "").trim();
+    if (!name) {
+      ElMessage.warning("项目名不能为空");
+      return;
+    }
+
+    const created = await editorStore.createProject(name);
+    if (!created) {
+      ElMessage.error(editorStore.autoSaveError || "新增项目失败");
+      return;
+    }
+
+    ElMessage.success(`项目已创建：${created.name}`);
+  });
+};
+
+const renameCurrentProject = async () => {
+  const current = editorStore.currentProject;
+  if (!current) {
+    ElMessage.warning("当前没有可编辑的项目");
+    return;
+  }
+
+  await runProjectAction(async () => {
+    const promptResult = await ElMessageBox.prompt("请输入新的项目名称", "编辑项目名", {
+      confirmButtonText: "保存",
+      cancelButtonText: "取消",
+      inputPlaceholder: "项目名称",
+      inputValue: current.name,
+    });
+
+    const name = String((promptResult as { value?: string }).value ?? "").trim();
+    if (!name) {
+      ElMessage.warning("项目名不能为空");
+      return;
+    }
+
+    const renamed = await editorStore.renameProject(current.id, name);
+    if (!renamed) {
+      ElMessage.error("项目名更新失败");
+      return;
+    }
+
+    ElMessage.success("项目名已更新");
+  });
+};
+
+const deleteCurrentProject = async () => {
+  const current = editorStore.currentProject;
+  if (!current) {
+    ElMessage.warning("当前没有可删除的项目");
+    return;
+  }
+
+  await runProjectAction(async () => {
+    await ElMessageBox.confirm(
+      `确认删除项目「${current.name}」？删除后该项目下页面会一并删除。`,
+      "删除项目",
+      {
+        confirmButtonText: "删除",
+        cancelButtonText: "取消",
+        type: "warning",
+      }
+    );
+
+    const deleted = await editorStore.deleteProject(current.id);
+    if (!deleted) {
+      ElMessage.error(editorStore.autoSaveError || "删除项目失败");
+      return;
+    }
+
+    ElMessage.success("项目已删除");
+  });
+};
+
+const onProjectMenuCommand = async (command: string | number | object) => {
+  const value = String(command ?? "");
+  if (!value) {
+    return;
+  }
+
+  try {
+    if (value.startsWith("switch:")) {
+      await switchProjectById(value.slice("switch:".length));
+      return;
+    }
+
+    if (value === "create") {
+      await createProjectFromPrompt();
+      return;
+    }
+
+    if (value === "rename") {
+      await renameCurrentProject();
+      return;
+    }
+
+    if (value === "delete") {
+      await deleteCurrentProject();
+    }
+  } catch {
+    // MessageBox cancel/close: do nothing.
+  }
+};
 
 const duplicateSelected = () => {
   if (!editorStore.selectedNodeId) {
@@ -226,7 +413,36 @@ const handlePublish = async () => {
 .project-info {
   display: flex;
   flex-direction: column;
+  gap: 2px;
   min-width: 0;
+}
+
+.project-name-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.project-switch-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+}
+
+.project-switch-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.project-switch-btn:hover:not(:disabled) .project-name {
+  color: #2d5fca;
 }
 
 .project-name {
@@ -238,13 +454,30 @@ const handlePublish = async () => {
   text-overflow: ellipsis;
 }
 
+.project-switch-icon {
+  font-size: 12px;
+  color: #73809a;
+}
+
 .project-sub {
   font-size: 11px;
   color: #7a8396;
 }
 
 .project-meta-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-height: 16px;
+}
+
+.project-page {
+  font-size: 11px;
+  color: #7a8396;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .device-group,
 .tool-group {

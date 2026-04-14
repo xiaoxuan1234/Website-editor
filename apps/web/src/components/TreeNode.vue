@@ -126,6 +126,7 @@
         <div
           class="child-item"
           :class="{ 'child-item-container': child.type === 'container' }"
+          :style="getChildItemStyle(child)"
           :data-index="index"
         >
           <TreeNode
@@ -245,10 +246,57 @@ const containerLayoutMode = computed<"flow" | "flex" | "grid">(() => {
   }
   return "flow";
 });
+const containerFlexDirection = computed(() =>
+  String(nodeInlineStyle.value.flexDirection ?? "row").trim().toLowerCase()
+);
+const isColumnFlexContainer = computed(
+  () =>
+    containerLayoutMode.value === "flex" &&
+    (containerFlexDirection.value === "column" ||
+      containerFlexDirection.value === "column-reverse")
+);
 const hasCustomHeight = computed(() => {
   const heightValue = String(nodeInlineStyle.value.height ?? "").trim().toLowerCase();
   return heightValue !== "" && heightValue !== "auto";
 });
+const getChildItemStyle = (child: EditorNode): Record<string, string | number> => {
+  const childStyle = editorStore.getNodeStyleByMode(child) as Record<string, unknown>;
+  const next: Record<string, string | number> = {
+    minWidth: "0",
+    minHeight: isColumnFlexContainer.value ? "auto" : "0",
+    maxWidth: "100%",
+  };
+
+  [
+    "flex",
+    "flexGrow",
+    "flexShrink",
+    "flexBasis",
+    "width",
+    "minWidth",
+    "maxWidth",
+    "alignSelf",
+    "justifySelf",
+    "order",
+    "gridColumn",
+    "gridColumnStart",
+    "gridColumnEnd",
+    "gridRow",
+    "gridRowStart",
+    "gridRowEnd",
+  ].forEach((key) => {
+    const value = childStyle[key];
+    if (typeof value === "string" || typeof value === "number") {
+      next[key] = value;
+    }
+  });
+
+  if (containerLayoutMode.value === "grid" && next.width === undefined) {
+    next.width = "100%";
+  }
+
+  return next;
+};
 const showToolbar = computed(() => !props.previewMode && isSelected.value);
 const canMoveUp = computed(() => !props.previewMode && props.index > 0);
 const showSizeBadge = computed(() => !props.previewMode && isSelected.value);
@@ -581,6 +629,9 @@ onBeforeUnmount(() => {
 
 .child-item {
   margin: 0;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
 }
 
 .children-zone.layout-flow > .child-item.child-item-container {
@@ -589,8 +640,9 @@ onBeforeUnmount(() => {
 
 .children-zone.layout-flex > .child-item > .tree-node,
 .children-zone.layout-grid > .child-item > .tree-node {
-  width: auto;
   margin: 0;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .children-zone > .child-item:first-of-type > .tree-node {

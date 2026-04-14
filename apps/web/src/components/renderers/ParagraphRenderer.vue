@@ -75,6 +75,8 @@ watch(
   color: inherit;
   font-size: 15px;
   line-height: 1.75;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .paragraph.editable {

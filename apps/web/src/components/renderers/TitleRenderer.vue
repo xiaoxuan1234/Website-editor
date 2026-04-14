@@ -81,10 +81,13 @@ watch(
 <style scoped>
 .title {
   margin: 0;
+  max-width: 100%;
   color: inherit;
   line-height: 1.28;
   letter-spacing: -0.01em;
   font-weight: 700;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .title.h1 {

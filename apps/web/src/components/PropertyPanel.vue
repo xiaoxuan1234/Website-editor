@@ -596,6 +596,7 @@
               </template>
 
               <div v-else class="content-tip">当前元素暂无可配置的专属属性。</div>
+
             </div>
           </section>
 
@@ -605,8 +606,8 @@
               <el-icon :class="{ folded: !isSectionOpen('sizeMain') }"><ArrowDown /></el-icon>
             </div>
             <div v-show="isSectionOpen('sizeMain')" class="field-grid cols-2">
-              <div class="field"><label>宽度</label><UnitInput v-model="styleDraft.width" :disabled="preview" :allow-auto="true" /></div>
-              <div class="field"><label>高度</label><UnitInput v-model="styleDraft.height" :disabled="preview" :allow-auto="true" /></div>
+              <div class="field"><label>宽度</label><UnitInput v-model="styleDraft.width" :disabled="preview" :allow-auto="true" :allow-fit-content="true" /></div>
+              <div class="field"><label>高度</label><UnitInput v-model="styleDraft.height" :disabled="preview" :allow-auto="true" :allow-fit-content="true" /></div>
               <div class="field"><label>最小宽度</label><UnitInput v-model="styleDraft.minWidth" :disabled="preview" /></div>
               <div class="field"><label>最小高度</label><UnitInput v-model="styleDraft.minHeight" :disabled="preview" /></div>
               <div class="field"><label>最大宽度</label><UnitInput v-model="styleDraft.maxWidth" :disabled="preview" /></div>
@@ -1068,7 +1069,7 @@
 import { ElMessage } from "element-plus";
 import { ArrowDown } from "@element-plus/icons-vue";
 import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
-import type { EditorNode, NodeType } from "@wg/schema";
+import { DefaultNodePropsByType, type EditorNode, type NodeType } from "@wg/schema";
 import UnitInput from "@/components/UnitInput.vue";
 import { useEditorStore } from "@/stores/editor";
 
@@ -1151,6 +1152,7 @@ const activeTargetId = computed(() =>
 );
 
 const displayOptions = [
+  { label: "默认", value: "" },
   { label: "block", value: "block" },
   { label: "inline", value: "inline" },
   { label: "inline-block", value: "inline-block" },
@@ -1159,6 +1161,7 @@ const displayOptions = [
   { label: "none", value: "none" },
 ];
 const positionOptions = [
+  { label: "默认", value: "" },
   { label: "默认流", value: "static" },
   { label: "相对定位", value: "relative" },
   { label: "绝对定位", value: "absolute" },
@@ -1445,13 +1448,13 @@ const propsDraft = reactive({
 });
 
 const displayDraft = reactive({
-  display: "block",
-  position: "static",
-  top: "auto",
-  left: "auto",
-  bottom: "auto",
-  right: "auto",
-  float: "none",
+  display: "",
+  position: "",
+  top: "",
+  left: "",
+  bottom: "",
+  right: "",
+  float: "",
   opacity: 1,
   backgroundColor: "",
   color: "",
@@ -1525,6 +1528,7 @@ const styleDraft = reactive({
   lineHeight: "",
   letterSpacing: "",
 });
+const extraStyleDraft = reactive<Record<string, string>>({});
 const isContainerFlexOrGrid = computed(
   () =>
     activeNodeType.value === "container" &&
@@ -1571,7 +1575,9 @@ const syncingDraft = ref(false);
 let propsTimer: ReturnType<typeof setTimeout> | null = null;
 let displayTimer: ReturnType<typeof setTimeout> | null = null;
 let styleTimer: ReturnType<typeof setTimeout> | null = null;
+let extraStyleTimer: ReturnType<typeof setTimeout> | null = null;
 let pageTimer: ReturnType<typeof setTimeout> | null = null;
+let draftSyncVersion = 0;
 
 const clearTimers = () => {
   if (propsTimer) {
@@ -1586,6 +1592,10 @@ const clearTimers = () => {
     clearTimeout(styleTimer);
     styleTimer = null;
   }
+  if (extraStyleTimer) {
+    clearTimeout(extraStyleTimer);
+    extraStyleTimer = null;
+  }
   if (pageTimer) {
     clearTimeout(pageTimer);
     pageTimer = null;
@@ -1593,6 +1603,173 @@ const clearTimers = () => {
 };
 
 onBeforeUnmount(clearTimers);
+
+const beginDraftSync = () => {
+  clearTimers();
+  draftSyncVersion += 1;
+  syncingDraft.value = true;
+  return draftSyncVersion;
+};
+
+const endDraftSync = (version: number) => {
+  queueMicrotask(() => {
+    if (draftSyncVersion === version) {
+      syncingDraft.value = false;
+    }
+  });
+};
+
+const displayManagedStyleKeys = [
+  "display",
+  "position",
+  "top",
+  "left",
+  "bottom",
+  "right",
+  "float",
+  "opacity",
+  "backgroundColor",
+  "color",
+] as const;
+
+const createManagedStyleKeySet = () =>
+  new Set<string>([...styleKeys, ...displayManagedStyleKeys]);
+
+const replaceExtraStyleDraft = (next: Record<string, string>) => {
+  Object.keys(extraStyleDraft).forEach((key) => {
+    delete extraStyleDraft[key];
+  });
+  Object.entries(next).forEach(([key, value]) => {
+    extraStyleDraft[key] = value;
+  });
+};
+
+const toEditableStyleValue = (value: unknown): string | null => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return null;
+};
+
+const readExtraStyleFromNode = (target: EditorNode): Record<string, string> => {
+  const scopedStyle = editorStore.getNodeStyleByMode(target, editorStore.styleScope) as Record<
+    string,
+    unknown
+  >;
+  const managedKeys = createManagedStyleKeySet();
+  const next: Record<string, string> = {};
+  Object.entries(scopedStyle).forEach(([key, value]) => {
+    if (managedKeys.has(key)) {
+      return;
+    }
+    const editableValue = toEditableStyleValue(value);
+    if (editableValue === null || editableValue.trim() === "") {
+      return;
+    }
+    next[key] = editableValue;
+  });
+  return next;
+};
+
+const splitCssTokens = (value: string): string[] => {
+  const tokens: string[] = [];
+  let current = "";
+  let depth = 0;
+
+  for (const char of value.trim()) {
+    if (char === "(") {
+      depth += 1;
+      current += char;
+      continue;
+    }
+    if (char === ")") {
+      depth = Math.max(0, depth - 1);
+      current += char;
+      continue;
+    }
+    if (/\s/.test(char) && depth === 0) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+
+  if (current) {
+    tokens.push(current);
+  }
+  return tokens;
+};
+
+const parseBoxShorthand = (
+  value: string
+): { top: string; right: string; bottom: string; left: string } | null => {
+  const tokens = splitCssTokens(value);
+  if (tokens.length < 1 || tokens.length > 4) {
+    return null;
+  }
+  if (tokens.length === 1) {
+    const [one] = tokens;
+    return { top: one, right: one, bottom: one, left: one };
+  }
+  if (tokens.length === 2) {
+    const [vertical, horizontal] = tokens;
+    return { top: vertical, right: horizontal, bottom: vertical, left: horizontal };
+  }
+  if (tokens.length === 3) {
+    const [top, horizontal, bottom] = tokens;
+    return { top, right: horizontal, bottom, left: horizontal };
+  }
+  const [top, right, bottom, left] = tokens;
+  return { top, right, bottom, left };
+};
+
+const BORDER_STYLE_SET = new Set([
+  "none",
+  "hidden",
+  "dotted",
+  "dashed",
+  "solid",
+  "double",
+  "groove",
+  "ridge",
+  "inset",
+  "outset",
+]);
+const BORDER_WIDTH_KEYWORDS = new Set(["thin", "medium", "thick"]);
+const LENGTH_VALUE_PATTERN =
+  /^-?\d*\.?\d+(?:px|r?em|%|vh|vw|vmin|vmax|ch|ex|cm|mm|in|pt|pc)$/i;
+
+const parseBorderShorthand = (value: string): { width: string; style: string; color: string } => {
+  const tokens = splitCssTokens(value);
+  let width = "";
+  let style = "";
+  const colorTokens: string[] = [];
+
+  tokens.forEach((token) => {
+    const normalized = token.toLowerCase();
+    if (!width && (BORDER_WIDTH_KEYWORDS.has(normalized) || LENGTH_VALUE_PATTERN.test(token))) {
+      width = token;
+      return;
+    }
+    if (!style && BORDER_STYLE_SET.has(normalized)) {
+      style = token;
+      return;
+    }
+    colorTokens.push(token);
+  });
+
+  return {
+    width,
+    style,
+    color: colorTokens.join(" ").trim(),
+  };
+};
 
 const readScopedStyle = (target: EditorNode, key: string): string => {
   const style = editorStore.getNodeStyleByMode(target, editorStore.styleScope) as Record<
@@ -1604,7 +1781,7 @@ const readScopedStyle = (target: EditorNode, key: string): string => {
 };
 
 const fillDraft = (target: EditorNode | null) => {
-  syncingDraft.value = true;
+  const syncVersion = beginDraftSync();
 
   if (!target) {
     pageDraft.backgroundColor = String(editorStore.pageStyle.backgroundColor ?? "#ffffff");
@@ -1650,13 +1827,13 @@ const fillDraft = (target: EditorNode | null) => {
     propsDraft.layout = "flow";
     propsDraft.emptyText = "拖拽组件到容器内";
 
-    displayDraft.display = "block";
-    displayDraft.position = "static";
-    displayDraft.top = "auto";
-    displayDraft.left = "auto";
-    displayDraft.bottom = "auto";
-    displayDraft.right = "auto";
-    displayDraft.float = "none";
+    displayDraft.display = "";
+    displayDraft.position = "";
+    displayDraft.top = "";
+    displayDraft.left = "";
+    displayDraft.bottom = "";
+    displayDraft.right = "";
+    displayDraft.float = "";
     displayDraft.opacity = 1;
     displayDraft.backgroundColor = "";
     displayDraft.color = "";
@@ -1664,8 +1841,9 @@ const fillDraft = (target: EditorNode | null) => {
     styleKeys.forEach((key) => {
       styleDraft[key] = "";
     });
+    replaceExtraStyleDraft({});
 
-    syncingDraft.value = false;
+    endDraftSync(syncVersion);
     return;
   }
 
@@ -1710,20 +1888,91 @@ const fillDraft = (target: EditorNode | null) => {
   propsDraft.layout = String(target.props.layout ?? "flow");
   propsDraft.emptyText = String(target.props.emptyText ?? "拖拽组件到容器内");
 
-  displayDraft.display = readScopedStyle(target, "display") || "block";
-  displayDraft.position = readScopedStyle(target, "position") || "static";
-  displayDraft.top = readScopedStyle(target, "top") || "auto";
-  displayDraft.left = readScopedStyle(target, "left") || "auto";
-  displayDraft.bottom = readScopedStyle(target, "bottom") || "auto";
-  displayDraft.right = readScopedStyle(target, "right") || "auto";
-  displayDraft.float = readScopedStyle(target, "float") || "none";
-  displayDraft.opacity = Number(readScopedStyle(target, "opacity") || 1);
+  displayDraft.display = readScopedStyle(target, "display");
+  displayDraft.position = readScopedStyle(target, "position");
+  displayDraft.top = readScopedStyle(target, "top");
+  displayDraft.left = readScopedStyle(target, "left");
+  displayDraft.bottom = readScopedStyle(target, "bottom");
+  displayDraft.right = readScopedStyle(target, "right");
+  displayDraft.float = readScopedStyle(target, "float");
+  const rawOpacity = readScopedStyle(target, "opacity");
+  displayDraft.opacity = rawOpacity === "" ? 1 : Number(rawOpacity || 1);
   displayDraft.backgroundColor = readScopedStyle(target, "backgroundColor");
   displayDraft.color = readScopedStyle(target, "color");
 
   styleKeys.forEach((key) => {
     styleDraft[key] = readScopedStyle(target, key);
   });
+
+  const paddingFromShorthand = parseBoxShorthand(readScopedStyle(target, "padding"));
+  if (paddingFromShorthand) {
+    if (!styleDraft.paddingTop) {
+      styleDraft.paddingTop = paddingFromShorthand.top;
+    }
+    if (!styleDraft.paddingRight) {
+      styleDraft.paddingRight = paddingFromShorthand.right;
+    }
+    if (!styleDraft.paddingBottom) {
+      styleDraft.paddingBottom = paddingFromShorthand.bottom;
+    }
+    if (!styleDraft.paddingLeft) {
+      styleDraft.paddingLeft = paddingFromShorthand.left;
+    }
+  }
+
+  const marginFromShorthand = parseBoxShorthand(readScopedStyle(target, "margin"));
+  if (marginFromShorthand) {
+    if (!styleDraft.marginTop) {
+      styleDraft.marginTop = marginFromShorthand.top;
+    }
+    if (!styleDraft.marginRight) {
+      styleDraft.marginRight = marginFromShorthand.right;
+    }
+    if (!styleDraft.marginBottom) {
+      styleDraft.marginBottom = marginFromShorthand.bottom;
+    }
+    if (!styleDraft.marginLeft) {
+      styleDraft.marginLeft = marginFromShorthand.left;
+    }
+  }
+
+  const borderFromShorthand = parseBorderShorthand(readScopedStyle(target, "border"));
+  if (!styleDraft.borderWidth && borderFromShorthand.width) {
+    styleDraft.borderWidth = borderFromShorthand.width;
+  }
+  if (!styleDraft.borderStyle && borderFromShorthand.style) {
+    styleDraft.borderStyle = borderFromShorthand.style;
+  }
+  if (!styleDraft.borderColor && borderFromShorthand.color) {
+    styleDraft.borderColor = borderFromShorthand.color;
+  }
+
+  const radiusFromShorthand = parseBoxShorthand(readScopedStyle(target, "borderRadius"));
+  if (radiusFromShorthand) {
+    if (!styleDraft.borderTopLeftRadius) {
+      styleDraft.borderTopLeftRadius = radiusFromShorthand.top;
+    }
+    if (!styleDraft.borderTopRightRadius) {
+      styleDraft.borderTopRightRadius = radiusFromShorthand.right;
+    }
+    if (!styleDraft.borderBottomRightRadius) {
+      styleDraft.borderBottomRightRadius = radiusFromShorthand.bottom;
+    }
+    if (!styleDraft.borderBottomLeftRadius) {
+      styleDraft.borderBottomLeftRadius = radiusFromShorthand.left;
+    }
+  }
+
+  const overflowFromShorthand = readScopedStyle(target, "overflow");
+  if (overflowFromShorthand) {
+    if (!styleDraft.overflowX) {
+      styleDraft.overflowX = overflowFromShorthand;
+    }
+    if (!styleDraft.overflowY) {
+      styleDraft.overflowY = overflowFromShorthand;
+    }
+  }
+  replaceExtraStyleDraft(readExtraStyleFromNode(target));
 
   pageDraft.backgroundColor = String(editorStore.pageStyle.backgroundColor ?? "#ffffff");
   pageDraft.backgroundImage = String(editorStore.pageStyle.backgroundImage ?? "");
@@ -1732,7 +1981,7 @@ const fillDraft = (target: EditorNode | null) => {
   pageDraft.backgroundPosition = String(editorStore.pageStyle.backgroundPosition ?? "center center");
   pageDraft.backgroundAttachment = String(editorStore.pageStyle.backgroundAttachment ?? "scroll");
 
-  syncingDraft.value = false;
+  endDraftSync(syncVersion);
 };
 
 watch(node, (value) => fillDraft(value), { immediate: true });
@@ -1748,31 +1997,29 @@ watch(
 );
 
 const buildPropsPatch = (current: EditorNode): Record<string, unknown> => {
+  let candidate: Record<string, unknown>;
+
   if (current.type === "title") {
-    return {
+    candidate = {
       content: propsDraft.content,
       level: propsDraft.titleLevel,
     };
-  }
-  if (["text", "paragraph", "nav", "li"].includes(current.type)) {
-    return { content: propsDraft.content };
-  }
-  if (current.type === "i") {
-    return {
+  } else if (["text", "paragraph", "nav", "li"].includes(current.type)) {
+    candidate = { content: propsDraft.content };
+  } else if (current.type === "i") {
+    candidate = {
       icon: propsDraft.iconClass.trim() || "icon-zujian",
       iconSrc: propsDraft.iconSrc.trim() || null,
     };
-  }
-  if (current.type === "button") {
-    return {
+  } else if (current.type === "button") {
+    candidate = {
       label: propsDraft.label,
       variant: propsDraft.buttonVariant,
       size: propsDraft.buttonSize,
       disabled: propsDraft.buttonDisabled,
     };
-  }
-  if (current.type === "link") {
-    return {
+  } else if (current.type === "link") {
+    candidate = {
       label: propsDraft.label,
       href: propsDraft.href,
       target: propsDraft.linkTarget,
@@ -1780,9 +2027,8 @@ const buildPropsPatch = (current: EditorNode): Record<string, unknown> => {
       title: propsDraft.linkTitle,
       nofollow: propsDraft.linkNoFollow,
     };
-  }
-  if (current.type === "input") {
-    return {
+  } else if (current.type === "input") {
+    candidate = {
       placeholder: propsDraft.placeholder,
       type: propsDraft.inputType,
       disabled: propsDraft.inputDisabled,
@@ -1791,25 +2037,22 @@ const buildPropsPatch = (current: EditorNode): Record<string, unknown> => {
       maxLength: propsDraft.inputMaxLength > 0 ? Math.floor(propsDraft.inputMaxLength) : null,
       value: propsDraft.inputValue,
     };
-  }
-  if (current.type === "image") {
-    return {
+  } else if (current.type === "image") {
+    candidate = {
       src: propsDraft.src,
       alt: propsDraft.imageAlt.trim() || "图片",
       fit: propsDraft.imageFit || "cover",
       position: propsDraft.imagePosition.trim() || "center center",
     };
-  }
-  if (current.type === "table") {
-    return {
+  } else if (current.type === "table") {
+    candidate = {
       rows: Math.max(1, Math.floor(propsDraft.rows || 1)),
       cols: Math.max(1, Math.floor(propsDraft.cols || 1)),
       striped: propsDraft.tableStriped,
       showHeader: propsDraft.tableShowHeader,
     };
-  }
-  if (current.type === "list" || current.type === "ul" || current.type === "ol") {
-    return {
+  } else if (current.type === "list" || current.type === "ul" || current.type === "ol") {
+    candidate = {
       items: propsDraft.itemsText
         .split("\n")
         .map((line) => line.trim())
@@ -1817,11 +2060,13 @@ const buildPropsPatch = (current: EditorNode): Record<string, unknown> => {
       listStyleType: propsDraft.listStyleType,
       itemSpacing: Math.max(0, Math.floor(propsDraft.listItemSpacing || 0)),
     };
+  } else if (current.type === "container") {
+    candidate = { layout: propsDraft.layout, emptyText: propsDraft.emptyText };
+  } else {
+    candidate = {};
   }
-  if (current.type === "container") {
-    return { layout: propsDraft.layout, emptyText: propsDraft.emptyText };
-  }
-  return {};
+
+  return buildChangedPropsPatch(current, candidate);
 };
 
 const normalizeStyleValue = (value: string): string | null => {
@@ -1837,6 +2082,41 @@ const normalizeColorValue = (value: string): string | null => {
 const normalizePageImageValue = (value: string): string | null => {
   const next = value.trim();
   return next === "" ? null : next;
+};
+
+const areDraftValuesEqual = (left: unknown, right: unknown): boolean => {
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false;
+    }
+    return left.every((item, index) => item === right[index]);
+  }
+  return left === right;
+};
+
+const buildChangedPropsPatch = (
+  current: EditorNode,
+  candidate: Record<string, unknown>,
+): Record<string, unknown> => {
+  const defaults = DefaultNodePropsByType[current.type] as Record<string, unknown>;
+  const nextPatch: Record<string, unknown> = {};
+
+  Object.entries(candidate).forEach(([key, value]) => {
+    const currentValue = current.props[key];
+    const defaultValue = defaults[key];
+
+    if (currentValue === undefined && areDraftValuesEqual(value, defaultValue)) {
+      return;
+    }
+
+    if (areDraftValuesEqual(currentValue, value)) {
+      return;
+    }
+
+    nextPatch[key] = value;
+  });
+
+  return nextPatch;
 };
 
 const triggerPageBgUpload = () => {
@@ -2013,24 +2293,81 @@ const clearNodeImage = () => {
   propsDraft.src = "";
 };
 
-const buildDisplayPatch = (): Record<string, string | number | null> => ({
-  display: displayDraft.display,
-  position: displayDraft.position,
-  top: displayDraft.top || "auto",
-  left: displayDraft.left || "auto",
-  bottom: displayDraft.bottom || "auto",
-  right: displayDraft.right || "auto",
-  float: displayDraft.float,
-  opacity: Number(displayDraft.opacity.toFixed(2)),
-  backgroundColor: normalizeStyleValue(displayDraft.backgroundColor),
-  color: normalizeStyleValue(displayDraft.color),
-});
+const buildDisplayPatch = (
+  currentStyle: Record<string, unknown>,
+): Record<string, string | number | null> => {
+  const nextPatch: Record<string, string | number | null> = {};
+  const candidate: Record<string, string | number | null> = {
+    display: normalizeStyleValue(displayDraft.display),
+    position: normalizeStyleValue(displayDraft.position),
+    top: normalizeStyleValue(displayDraft.top),
+    left: normalizeStyleValue(displayDraft.left),
+    bottom: normalizeStyleValue(displayDraft.bottom),
+    right: normalizeStyleValue(displayDraft.right),
+    float: normalizeStyleValue(displayDraft.float),
+    opacity: Number(displayDraft.opacity.toFixed(2)),
+    backgroundColor: normalizeStyleValue(displayDraft.backgroundColor),
+    color: normalizeStyleValue(displayDraft.color),
+  };
+
+  Object.entries(candidate).forEach(([key, value]) => {
+    const currentValue = currentStyle[key];
+    if (
+      key === "opacity" &&
+      (currentValue === undefined || currentValue === null || currentValue === "") &&
+      value === 1
+    ) {
+      return;
+    }
+
+    if (currentValue === value) {
+      return;
+    }
+
+    nextPatch[key] = value;
+  });
+
+  return nextPatch;
+};
 
 const buildStylePatch = (): Record<string, string | null> => {
   const patch: Record<string, string | null> = {};
   styleKeys.forEach((key) => {
     patch[key] = normalizeStyleValue(styleDraft[key]);
   });
+  return patch;
+};
+
+const buildExtraStylePatch = (
+  currentStyle: Record<string, unknown>
+): Record<string, string | null> => {
+  const patch: Record<string, string | null> = {};
+  const managedKeys = createManagedStyleKeySet();
+  const currentExtraKeys = Object.keys(currentStyle).filter((key) => !managedKeys.has(key));
+  const allKeys = new Set([...currentExtraKeys, ...Object.keys(extraStyleDraft)]);
+
+  allKeys.forEach((key) => {
+    const draftValue = Object.prototype.hasOwnProperty.call(extraStyleDraft, key)
+      ? normalizeStyleValue(extraStyleDraft[key] ?? "")
+      : null;
+    const currentValue = currentStyle[key];
+    const normalizedCurrent =
+      currentValue === undefined || currentValue === null ? null : String(currentValue);
+
+    if (draftValue === null) {
+      if (normalizedCurrent === null || normalizedCurrent === "") {
+        return;
+      }
+      patch[key] = null;
+      return;
+    }
+
+    if (normalizedCurrent === draftValue) {
+      return;
+    }
+    patch[key] = draftValue;
+  });
+
   return patch;
 };
 
@@ -2055,12 +2392,12 @@ const applyDisplayNow = () => {
     return;
   }
 
-  const patch = buildDisplayPatch();
   const currentStyle = editorStore.getNodeStyleByMode(current, editorStore.styleScope) as Record<
     string,
     unknown
   >;
-  if (isPatchDifferent(currentStyle, patch)) {
+  const patch = buildDisplayPatch(currentStyle);
+  if (Object.keys(patch).length > 0) {
     editorStore.updateSelectedStyle(patch);
   }
 };
@@ -2077,6 +2414,22 @@ const applyStyleNow = () => {
     unknown
   >;
   if (isPatchDifferent(currentStyle, patch)) {
+    editorStore.updateSelectedStyle(patch);
+  }
+};
+
+const applyExtraStyleNow = () => {
+  const current = node.value;
+  if (!current || preview.value || syncingDraft.value) {
+    return;
+  }
+
+  const currentStyle = editorStore.getNodeStyleByMode(current, editorStore.styleScope) as Record<
+    string,
+    unknown
+  >;
+  const patch = buildExtraStylePatch(currentStyle);
+  if (Object.keys(patch).length > 0) {
     editorStore.updateSelectedStyle(patch);
   }
 };
@@ -2118,6 +2471,9 @@ const applyPageNow = () => {
 watch(
   propsDraft,
   () => {
+    if (syncingDraft.value) {
+      return;
+    }
     if (propsTimer) {
       clearTimeout(propsTimer);
     }
@@ -2129,6 +2485,9 @@ watch(
 watch(
   displayDraft,
   () => {
+    if (syncingDraft.value) {
+      return;
+    }
     if (displayTimer) {
       clearTimeout(displayTimer);
     }
@@ -2140,10 +2499,27 @@ watch(
 watch(
   styleDraft,
   () => {
+    if (syncingDraft.value) {
+      return;
+    }
     if (styleTimer) {
       clearTimeout(styleTimer);
     }
     styleTimer = setTimeout(applyStyleNow, 80);
+  },
+  { deep: true }
+);
+
+watch(
+  extraStyleDraft,
+  () => {
+    if (syncingDraft.value) {
+      return;
+    }
+    if (extraStyleTimer) {
+      clearTimeout(extraStyleTimer);
+    }
+    extraStyleTimer = setTimeout(applyExtraStyleNow, 80);
   },
   { deep: true }
 );
@@ -2171,6 +2547,9 @@ watch(
 watch(
   pageDraft,
   () => {
+    if (syncingDraft.value) {
+      return;
+    }
     if (pageTimer) {
       clearTimeout(pageTimer);
     }
@@ -2186,14 +2565,14 @@ watch(
       return;
     }
 
-    syncingDraft.value = true;
+    const syncVersion = beginDraftSync();
     pageDraft.backgroundColor = String(value.backgroundColor ?? "#ffffff");
     pageDraft.backgroundImage = String(value.backgroundImage ?? "");
     pageDraft.backgroundSize = String(value.backgroundSize ?? "cover");
     pageDraft.backgroundRepeat = String(value.backgroundRepeat ?? "no-repeat");
     pageDraft.backgroundPosition = String(value.backgroundPosition ?? "center center");
     pageDraft.backgroundAttachment = String(value.backgroundAttachment ?? "scroll");
-    syncingDraft.value = false;
+    endDraftSync(syncVersion);
   },
   { deep: true }
 );
@@ -2420,6 +2799,48 @@ watch(
 .content-tip.compact {
   padding: 8px 10px;
   line-height: 1.4;
+}
+
+.raw-attrs-field {
+  gap: 8px;
+}
+
+.raw-attrs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.raw-attr-item {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #ffffff;
+  border: 1px solid #e2e8f3;
+}
+
+.raw-attr-key {
+  font-size: 12px;
+  font-weight: 700;
+  color: #41506b;
+  line-height: 1.4;
+  word-break: break-word;
+  padding-top: 7px;
+}
+
+.raw-attr-item :deep(.el-input__wrapper) {
+  min-height: 32px;
+}
+
+.raw-attr-remove {
+  width: 52px;
+  padding: 0;
 }
 
 .segmented {

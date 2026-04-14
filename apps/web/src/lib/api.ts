@@ -2,6 +2,9 @@ import {
   AuthLoginResponseSchema,
   type AIPageGenerateRequest,
   type AIPageGenerateResponse,
+  type AIChatMessage,
+  type AINodeModifyRequest,
+  type AINodeModifyResponse,
   type PageDocumentV2,
   type PageSummary,
   type Project,
@@ -30,61 +33,85 @@ export class ApiError extends Error {
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8787";
+const NETWORK_ERROR_MESSAGE = "无法连接到服务，请检查后端是否运行";
+const REQUEST_TOO_LARGE_MESSAGE = "请求体过大，请精简输入或压缩图片后重试";
 
 const jsonHeaders = {
   "Content-Type": "application/json",
 };
 
-const request = async <T>(
-  path: string,
-  options: RequestInit = {},
-  accessToken?: string
-): Promise<T> => {
+const buildHeaders = (options: RequestInit, accessToken?: string) => {
   const headers = new Headers(options.headers ?? {});
+
   if (options.body !== undefined && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+
   if (accessToken) {
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}${path}`, {
-      ...options,
-      headers,
-    });
-  } catch {
-    throw new ApiError("无法连接到服务，请检查后端是否运行", 0, "NETWORK_ERROR");
+  return headers;
+};
+
+const parseErrorPayload = (text: string): ErrorPayload | null => {
+  if (!text) {
+    return null;
   }
 
-  if (!response.ok) {
-    const text = await response.text();
-    let parsed: ErrorPayload | null = null;
+  try {
+    return JSON.parse(text) as ErrorPayload;
+  } catch {
+    return null;
+  }
+};
 
-    if (text) {
-      try {
-        parsed = JSON.parse(text) as ErrorPayload;
-      } catch {
-        parsed = null;
-      }
-    }
+const createApiError = async (response: Response): Promise<ApiError> => {
+  const text = await response.text();
+  const parsed = parseErrorPayload(text);
+  const status = response.status;
 
-    const status = response.status;
-    const code = parsed?.code;
-    const message =
-      parsed?.message ||
+  return new ApiError(
+    parsed?.message ||
       (text && !parsed ? text : "") ||
-      (status === 413 ? "请求体过大，请压缩图片后重试" : "") ||
-      `请求失败(${status})`;
+      (status === 413 ? REQUEST_TOO_LARGE_MESSAGE : "") ||
+      `请求失败(${status})`,
+    status,
+    parsed?.code,
+  );
+};
 
-    throw new ApiError(message, status, code);
+const fetchApi = async (
+  path: string,
+  options: RequestInit = {},
+  accessToken?: string,
+): Promise<Response> => {
+  try {
+    return await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: buildHeaders(options, accessToken),
+    });
+  } catch {
+    throw new ApiError(NETWORK_ERROR_MESSAGE, 0, "NETWORK_ERROR");
+  }
+};
+
+const request = async <T>(
+  path: string,
+  options: RequestInit = {},
+  accessToken?: string,
+): Promise<T> => {
+  const response = await fetchApi(path, options, accessToken);
+  if (!response.ok) {
+    throw await createApiError(response);
   }
 
   return (await response.json()) as T;
 };
 
-const parseDownloadFileName = (contentDisposition: string | null): string | null => {
+const parseDownloadFileName = (
+  contentDisposition: string | null,
+): string | null => {
   if (!contentDisposition) {
     return null;
   }
@@ -105,78 +132,69 @@ const parseDownloadFileName = (contentDisposition: string | null): string | null
 const requestBlob = async (
   path: string,
   options: RequestInit = {},
-  accessToken?: string
+  accessToken?: string,
 ): Promise<{ blob: Blob; fileName: string }> => {
-  const headers = new Headers(options.headers ?? {});
-  if (accessToken) {
-    headers.set("Authorization", `Bearer ${accessToken}`);
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}${path}`, {
-      ...options,
-      headers,
-    });
-  } catch {
-    throw new ApiError("无法连接到服务，请检查后端是否运行", 0, "NETWORK_ERROR");
-  }
-
+  const response = await fetchApi(path, options, accessToken);
   if (!response.ok) {
-    const text = await response.text();
-    let parsed: ErrorPayload | null = null;
-
-    if (text) {
-      try {
-        parsed = JSON.parse(text) as ErrorPayload;
-      } catch {
-        parsed = null;
-      }
-    }
-
-    const status = response.status;
-    const code = parsed?.code;
-    const message =
-      parsed?.message ||
-      (text && !parsed ? text : "") ||
-      (status === 413 ? "请求体过大，请压缩图片后重试" : "") ||
-      `请求失败(${status})`;
-
-    throw new ApiError(message, status, code);
+    throw await createApiError(response);
   }
 
-  const fileName =
-    parseDownloadFileName(response.headers.get("Content-Disposition")) || "page-export.zip";
-  const blob = await response.blob();
-  return { blob, fileName };
+  return {
+    blob: await response.blob(),
+    fileName:
+      parseDownloadFileName(response.headers.get("Content-Disposition")) ||
+      "page-export.zip",
+  };
+};
+
+const trimConversation = (conversation?: AIChatMessage[]) => {
+  if (!conversation || conversation.length === 0) {
+    return undefined;
+  }
+
+  return conversation
+    .map((message) => ({
+      role: message.role,
+      content: message.content.trim(),
+    }))
+    .filter((message) => message.content.length > 0)
+    .slice(-8);
 };
 
 export const apiClient = {
   baseUrl: API_BASE,
 
   async login(username: string, password: string) {
-    const payload = await request<{ accessToken: string; refreshToken: string; user: any }>(
-      "/auth/login",
-      {
-        method: "POST",
-        headers: jsonHeaders,
-        body: JSON.stringify({ username, password }),
-      }
-    );
+    const payload = await request<{
+      accessToken: string;
+      refreshToken: string;
+      user: unknown;
+    }>("/auth/login", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ username, password }),
+    });
 
     return AuthLoginResponseSchema.parse(payload);
   },
 
   async refresh(refreshToken: string) {
-    return request<{ accessToken: string; refreshToken: string }>("/auth/refresh", {
-      method: "POST",
-      headers: jsonHeaders,
-      body: JSON.stringify({ refreshToken }),
-    });
+    return request<{ accessToken: string; refreshToken: string }>(
+      "/auth/refresh",
+      {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ refreshToken }),
+      },
+    );
   },
 
   async getProjects(accessToken: string) {
-    const payload = await request<{ items: Project[] }>("/projects", {}, accessToken);
+    const payload = await request<{ items: Project[] }>(
+      "/projects",
+      {},
+      accessToken,
+    );
     return payload.items;
   },
 
@@ -187,12 +205,37 @@ export const apiClient = {
         method: "POST",
         body: JSON.stringify({ name }),
       },
-      accessToken
+      accessToken,
+    );
+  },
+
+  async updateProject(accessToken: string, id: string, name: string) {
+    return request<Project>(
+      `/projects/${id}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ name }),
+      },
+      accessToken,
+    );
+  },
+
+  async deleteProject(accessToken: string, id: string) {
+    return request<{ ok: true }>(
+      `/projects/${id}`,
+      {
+        method: "DELETE",
+      },
+      accessToken,
     );
   },
 
   async getProject(accessToken: string, id: string) {
-    return request<Project & { pages: PageSummary[] }>(`/projects/${id}`, {}, accessToken);
+    return request<Project & { pages: PageSummary[] }>(
+      `/projects/${id}`,
+      {},
+      accessToken,
+    );
   },
 
   async createPage(accessToken: string, projectId: string, title: string) {
@@ -210,7 +253,7 @@ export const apiClient = {
         method: "POST",
         body: JSON.stringify({ title }),
       },
-      accessToken
+      accessToken,
     );
   },
 
@@ -233,17 +276,22 @@ export const apiClient = {
         method: "PUT",
         body: JSON.stringify({ document }),
       },
-      accessToken
+      accessToken,
     );
   },
 
   async publish(accessToken: string, pageId: string) {
-    return request<{ pageId: string; versionId: string; slug: string; previewUrl: string }>(
+    return request<{
+      pageId: string;
+      versionId: string;
+      slug: string;
+      previewUrl: string;
+    }>(
       `/pages/${pageId}/publish`,
       {
         method: "POST",
       },
-      accessToken
+      accessToken,
     );
   },
 
@@ -258,27 +306,48 @@ export const apiClient = {
         method: "POST",
         body: JSON.stringify({ pageId }),
       },
-      accessToken
+      accessToken,
     );
   },
 
   async getPreview(slug: string) {
     return request<{ pageId: string; versionId: string; document: PageDocumentV2 }>(
-      `/preview/${slug}`
+      `/preview/${slug}`,
     );
   },
 
   async generateAIPage(
     accessToken: string,
-    payload: AIPageGenerateRequest
+    payload: AIPageGenerateRequest,
   ): Promise<AIPageGenerateResponse> {
     return request<AIPageGenerateResponse>(
       "/ai/page/generate",
       {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          ...payload,
+          instruction: payload.instruction.trim(),
+        }),
       },
-      accessToken
+      accessToken,
+    );
+  },
+
+  async modifyAINode(
+    accessToken: string,
+    payload: AINodeModifyRequest,
+  ): Promise<AINodeModifyResponse> {
+    return request<AINodeModifyResponse>(
+      "/ai/node/modify",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...payload,
+          instruction: payload.instruction.trim(),
+          conversation: trimConversation(payload.conversation),
+        }),
+      },
+      accessToken,
     );
   },
 };

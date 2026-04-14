@@ -88,7 +88,7 @@
                 draggable="false"
                 @click.stop="toggleLayer(item.id)"
               >
-                {{ isCollapsed(item.id) ? "▸" : "▾" }}
+                {{ isCollapsed(item.id) ? "+" : "-" }}
               </button>
               <span v-else class="layer-toggle placeholder-toggle"></span>
 
@@ -108,7 +108,7 @@
                   :disabled="item.index === 0"
                   @click.stop="moveLayer(item, -1)"
                 >
-                  ↑
+                  ^
                 </button>
                 <button
                   class="mini-btn"
@@ -118,7 +118,7 @@
                   :disabled="item.index >= item.siblingCount - 1"
                   @click.stop="moveLayer(item, 1)"
                 >
-                  ↓
+                  v
                 </button>
                 <button
                   class="mini-btn danger"
@@ -127,7 +127,7 @@
                   draggable="false"
                   @click.stop="editorStore.deleteNode(item.id)"
                 >
-                  ×
+                  x
                 </button>
               </div>
             </div>
@@ -145,208 +145,16 @@
             <section class="ai-section">
               <div class="ai-section-title">AI智能网页生成</div>
               <div class="ai-chat-sub">
-                根据您的需求生成完整的网页结构，支持自定义风格和布局。
+                输入一段需求即可生成整页。输入过长时系统会自动压缩重点，避免生成失败。
               </div>
 
               <el-input
                 v-model="aiPageInstruction"
                 type="textarea"
-                :rows="4"
-                placeholder="详细描述您想要的网页，例如：生成一个科技公司的产品介绍页，现代风格，蓝色主题，包含英雄区、功能介绍和联系表单。"
+                :rows="7"
+                placeholder="例如：生成一个科技公司的产品介绍页，整体简洁明亮，首屏有大标题和按钮，下方有产品优势、案例和联系区域。"
                 :disabled="previewMode"
               />
-
-              <el-divider content-position="left" style="margin: 8px 0"
-                >基础配置</el-divider
-              >
-              <div class="ai-options-grid">
-                <el-form label-width="80px" size="small">
-                  <el-form-item label="页面类型">
-                    <el-select
-                      v-model="aiPageOptions.pageType"
-                      placeholder="选择页面类型"
-                    >
-                      <el-option label="首页" value="home" />
-                      <el-option label="产品页" value="product" />
-                      <el-option label="联系页" value="contact" />
-                      <el-option label="着陆页" value="landing" />
-                      <el-option label="作品集" value="portfolio" />
-                      <el-option label="企业官网" value="business" />
-                    </el-select>
-                  </el-form-item>
-
-                  <el-form-item label="设计风格">
-                    <el-select
-                      v-model="aiPageOptions.style"
-                      placeholder="选择设计风格"
-                    >
-                      <el-option label="现代简约" value="modern" />
-                      <el-option label="商务专业" value="business" />
-                      <el-option label="创意个性" value="creative" />
-                      <el-option label="科技感" value="tech" />
-                      <el-option label="温暖友好" value="friendly" />
-                      <el-option label="极简主义" value="minimal" />
-                      <el-option label="复古风格" value="retro" />
-                      <el-option label="奢华高端" value="luxury" />
-                    </el-select>
-                  </el-form-item>
-
-                  <el-form-item label="语气风格">
-                    <el-select
-                      v-model="aiPageOptions.tone"
-                      placeholder="选择语气"
-                    >
-                      <el-option label="专业正式" value="professional" />
-                      <el-option label="轻松友好" value="friendly" />
-                      <el-option label="活力激情" value="energetic" />
-                      <el-option label="优雅精致" value="elegant" />
-                      <el-option label="简洁直接" value="concise" />
-                    </el-select>
-                  </el-form-item>
-                </el-form>
-              </div>
-
-              <el-divider content-position="left" style="margin: 8px 0"
-                >配色方案</el-divider
-              >
-              <div class="ai-options-grid">
-                <el-form label-width="80px" size="small">
-                  <el-form-item label="主色调">
-                    <el-color-picker
-                      v-model="aiPageOptions.primaryColor"
-                      show-alpha
-                    />
-                  </el-form-item>
-
-                  <el-form-item label="辅助色">
-                    <el-color-picker
-                      v-model="aiPageOptions.secondaryColor"
-                      show-alpha
-                    />
-                  </el-form-item>
-
-                  <el-form-item label="背景色">
-                    <el-color-picker
-                      v-model="aiPageOptions.backgroundColor"
-                      show-alpha
-                    />
-                  </el-form-item>
-                </el-form>
-              </div>
-
-              <el-divider content-position="left" style="margin: 8px 0"
-                >页面结构</el-divider
-              >
-              <div class="ai-options-grid">
-                <el-form label-width="80px" size="small">
-                  <el-form-item label="页面长度">
-                    <el-select
-                      v-model="aiPageOptions.length"
-                      placeholder="选择页面长度"
-                    >
-                      <el-option label="短 (1-2屏)" value="short" />
-                      <el-option label="中 (3-4屏)" value="medium" />
-                      <el-option label="长 (5+屏)" value="long" />
-                    </el-select>
-                  </el-form-item>
-
-                  <el-form-item label="复杂度">
-                    <el-select
-                      v-model="aiPageOptions.complexity"
-                      placeholder="选择复杂度"
-                    >
-                      <el-option label="简洁" value="simple" />
-                      <el-option label="适中" value="medium" />
-                      <el-option label="丰富" value="complex" />
-                    </el-select>
-                  </el-form-item>
-
-                  <el-form-item label="布局方式">
-                    <el-select
-                      v-model="aiPageOptions.layout"
-                      placeholder="选择布局"
-                    >
-                      <el-option label="现代布局" value="modern" />
-                      <el-option label="传统布局" value="classic" />
-                      <el-option label="卡片式" value="card" />
-                      <el-option label="单栏式" value="single" />
-                    </el-select>
-                  </el-form-item>
-                </el-form>
-              </div>
-
-              <el-divider content-position="left" style="margin: 8px 0"
-                >内容区块</el-divider
-              >
-              <div class="ai-options-grid">
-                <div class="section-checklist">
-                  <div class="section-row">
-                    <el-checkbox
-                      v-for="section in sectionPresets"
-                      :key="section.value"
-                      v-model="section.checked"
-                    >
-                      {{ section.label }}
-                    </el-checkbox>
-                  </div>
-                </div>
-              </div>
-
-              <el-divider content-position="left" style="margin: 8px 0"
-                >行业与受众</el-divider
-              >
-              <div class="ai-options-grid">
-                <el-form label-width="80px" size="small">
-                  <el-form-item label="所属行业">
-                    <el-select
-                      v-model="aiPageOptions.industry"
-                      placeholder="选择行业"
-                      clearable
-                    >
-                      <el-option label="科技互联网" value="tech" />
-                      <el-option label="教育培训" value="education" />
-                      <el-option label="金融理财" value="finance" />
-                      <el-option label="医疗健康" value="healthcare" />
-                      <el-option label="电商零售" value="ecommerce" />
-                      <el-option label="文化传媒" value="media" />
-                      <el-option label="旅游出行" value="travel" />
-                      <el-option label="房地产" value="realestate" />
-                      <el-option label="制造业" value="manufacturing" />
-                      <el-option label="餐饮美食" value="food" />
-                    </el-select>
-                  </el-form-item>
-
-                  <el-form-item label="目标受众">
-                    <el-select
-                      v-model="aiPageOptions.audience"
-                      placeholder="选择受众"
-                      clearable
-                    >
-                      <el-option label="企业客户 (B2B)" value="b2b" />
-                      <el-option label="个人消费者 (B2C)" value="b2c" />
-                      <el-option label="年轻群体" value="young" />
-                      <el-option label="中年群体" value="middle" />
-                      <el-option label="高端用户" value="premium" />
-                      <el-option label="大众市场" value="mass" />
-                    </el-select>
-                  </el-form-item>
-
-                  <el-form-item label="内容重点">
-                    <el-select
-                      v-model="aiPageOptions.contentFocus"
-                      placeholder="选择重点"
-                      clearable
-                    >
-                      <el-option label="产品展示" value="product" />
-                      <el-option label="服务介绍" value="service" />
-                      <el-option label="品牌故事" value="brand" />
-                      <el-option label="信息传达" value="info" />
-                      <el-option label="线索获取" value="leads" />
-                      <el-option label="销售转化" value="sales" />
-                    </el-select>
-                  </el-form-item>
-                </el-form>
-              </div>
 
               <div class="ai-chat-actions">
                 <el-button
@@ -355,13 +163,8 @@
                   :disabled="previewMode || !aiPageInstruction.trim()"
                   @click="generateAIPage"
                 >
-                  {{
-                    editorStore.aiPageGenerating ? "生成中…" : "智能生成网页"
-                  }}
+                  {{ editorStore.aiPageGenerating ? "生成中..." : "生成整页" }}
                 </el-button>
-                <div class="ai-tip">
-                  未配置 API Key 时将根据描述自动选择模板生成
-                </div>
               </div>
 
               <div v-if="editorStore.aiPageSummary" class="ai-draft">
@@ -374,9 +177,79 @@
                 {{ editorStore.aiPageError }}
               </div>
             </section>
+
+            <section class="ai-section">
+              <div class="ai-section-title">AI对话修改</div>
+              <div class="ai-chat-sub">
+                先在画布中选中一个元素，再通过下方独立输入框继续和 AI 对话修改当前部分。
+              </div>
+
+              <div class="ai-node-target" :class="{ empty: !selectedNodeLabel }">
+                <span class="ai-node-tag">
+                  {{ selectedNodeLabel || "未选择元素" }}
+                </span>
+                <span v-if="selectedNodeShortId" class="ai-node-id">
+                  #{{ selectedNodeShortId }}
+                </span>
+              </div>
+
+              <el-input
+                v-model="aiNodeInstruction"
+                type="textarea"
+                :rows="4"
+                placeholder="例如：把这个按钮改成圆角主按钮，文案改成“立即咨询”，颜色更醒目一些。"
+                :disabled="previewMode || !editorStore.selectedNode"
+              />
+
+              <div
+                v-if="currentNodeConversation.length > 0"
+                class="ai-conversation"
+              >
+                <div
+                  v-for="(message, index) in currentNodeConversation"
+                  :key="`${message.role}-${index}`"
+                  class="ai-message"
+                  :class="message.role"
+                >
+                  <div class="ai-message-role">
+                    {{ message.role === "user" ? "你" : "AI" }}
+                  </div>
+                  <div class="ai-message-content">
+                    {{ message.content }}
+                  </div>
+                </div>
+              </div>
+              <div v-else class="ai-empty">当前元素还没有对话记录。</div>
+
+              <div class="ai-chat-actions">
+                <el-button
+                  :loading="editorStore.aiNodeGenerating"
+                  :disabled="previewMode || !editorStore.selectedNode || !aiNodeInstruction.trim()"
+                  @click="modifySelectedPart"
+                >
+                  {{ editorStore.aiNodeGenerating ? "修改中..." : "修改选中部分" }}
+                </el-button>
+                <el-button
+                  plain
+                  :disabled="!editorStore.selectedNode || currentNodeConversation.length === 0"
+                  @click="clearCurrentConversation"
+                >
+                  清空当前对话
+                </el-button>
+              </div>
+
+              <div v-if="editorStore.aiNodeSummary" class="ai-draft">
+                <div class="ai-draft-title">修改说明</div>
+                <div class="ai-draft-summary">
+                  {{ editorStore.aiNodeSummary }}
+                </div>
+              </div>
+              <div v-if="editorStore.aiNodeError" class="error">
+                {{ editorStore.aiNodeError }}
+              </div>
+            </section>
           </div>
         </template>
-
         <div v-else class="placeholder">该面板暂未开放</div>
       </section>
     </div>
@@ -387,14 +260,19 @@
 import { computed, ref, type Component } from "vue";
 import { ChatDotRound, Files, Plus, Search } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
-import type { EditorNode, NodeType, PaletteElement } from "@wg/schema";
+import type {
+  AIChatMessage,
+  EditorNode,
+  NodeType,
+  PaletteElement,
+} from "@wg/schema";
 import { paletteElements } from "@/lib/nodes";
 import { useEditorStore } from "@/stores/editor";
 
 defineProps<{ previewMode: boolean }>();
 
 const modules: Array<{ key: string; label: string; icon: Component }> = [
-  { key: "elements", label: "元素", icon: Plus },
+  { key: "elements", label: "组件库", icon: Plus },
   { key: "layers", label: "图层", icon: Files },
   { key: "ai", label: "AI智能网页生成", icon: ChatDotRound },
 ];
@@ -402,61 +280,18 @@ const modules: Array<{ key: string; label: string; icon: Component }> = [
 const active = ref("elements");
 const keyword = ref("");
 const aiPageInstruction = ref("");
+const aiNodeInstruction = ref("");
 const collapsedLayers = ref<Set<string>>(new Set());
 const editorStore = useEditorStore();
-
-const aiPageOptions = ref({
-  pageType: "",
-  style: "",
-  primaryColor: "#3366ff",
-  secondaryColor: "#666666",
-  backgroundColor: "#ffffff",
-  tone: "",
-  length: "medium",
-  complexity: "medium",
-  layout: "modern",
-  contentFocus: "",
-  audience: "",
-  industry: "",
-  sections: [] as string[],
-});
-
-const sectionPresets = ref([
-  { label: "英雄区", value: "hero", checked: true },
-  { label: "特性介绍", value: "features", checked: true },
-  { label: "关于我们", value: "about", checked: true },
-  { label: "服务介绍", value: "services", checked: true },
-  { label: "团队介绍", value: "team", checked: false },
-  { label: "客户评价", value: "testimonials", checked: false },
-  { label: "作品展示", value: "gallery", checked: false },
-  { label: "常见问题", value: "faq", checked: false },
-  { label: "联系表单", value: "contact", checked: false },
-  { label: "行动号召", value: "cta", checked: true },
-]);
+const nodeConversationMap = ref<Record<string, AIChatMessage[]>>({});
 
 const generateAIPage = async () => {
-  const selectedSections = sectionPresets.value
-    .filter((s) => s.checked)
-    .map((s) => s.value);
-
   const success = await editorStore.generateAIPage({
     instruction: aiPageInstruction.value.trim(),
-    pageType: aiPageOptions.value.pageType || undefined,
-    style: aiPageOptions.value.style || undefined,
-    primaryColor: aiPageOptions.value.primaryColor || undefined,
-    secondaryColor: aiPageOptions.value.secondaryColor || undefined,
-    backgroundColor: aiPageOptions.value.backgroundColor || undefined,
-    tone: aiPageOptions.value.tone || undefined,
-    length: aiPageOptions.value.length || undefined,
-    complexity: aiPageOptions.value.complexity || undefined,
-    layout: aiPageOptions.value.layout || undefined,
-    contentFocus: aiPageOptions.value.contentFocus || undefined,
-    audience: aiPageOptions.value.audience || undefined,
-    industry: aiPageOptions.value.industry || undefined,
-    sections: selectedSections.length > 0 ? selectedSections : undefined,
   });
+
   if (success) {
-    ElMessage.success("智能网页已生成并替换");
+    ElMessage.success("AI 网页已生成");
   } else {
     ElMessage.error(editorStore.aiPageError || "网页生成失败");
   }
@@ -512,6 +347,75 @@ const typeIconMap = {
   list: "icon-liebiao",
   ...Object.fromEntries(paletteElements.map((item) => [item.type, item.icon])),
 } as Record<NodeType, string>;
+const currentSelectedNodeId = computed(
+  () => editorStore.selectedNode?.id ?? "",
+);
+
+const currentNodeConversation = computed(
+  () => nodeConversationMap.value[currentSelectedNodeId.value] ?? [],
+);
+
+const selectedNodeLabel = computed(() => {
+  const node = editorStore.selectedNode;
+  return node ? typeLabelMap[node.type] : "";
+});
+
+const selectedNodeShortId = computed(() =>
+  currentSelectedNodeId.value
+    ? currentSelectedNodeId.value.slice(-6)
+    : "",
+);
+
+const clearCurrentConversation = () => {
+  if (!currentSelectedNodeId.value) {
+    return;
+  }
+
+  const next = { ...nodeConversationMap.value };
+  delete next[currentSelectedNodeId.value];
+  nodeConversationMap.value = next;
+};
+
+const modifySelectedPart = async () => {
+  const node = editorStore.selectedNode;
+  if (!node) {
+    ElMessage.warning("请先选中一个元素");
+    return;
+  }
+
+  const instruction = aiNodeInstruction.value.trim();
+  if (!instruction) {
+    ElMessage.warning("请输入修改要求");
+    return;
+  }
+
+  const history = currentNodeConversation.value;
+  const success = await editorStore.modifySelectedNodeWithAI({
+    instruction,
+    conversation: history,
+  });
+
+  if (!success) {
+    ElMessage.error(editorStore.aiNodeError || "AI 修改失败");
+    return;
+  }
+
+  const nextHistory = [
+    ...history,
+    { role: "user", content: instruction } as AIChatMessage,
+    {
+      role: "assistant",
+      content: editorStore.aiNodeSummary || "已根据要求更新当前元素",
+    } as AIChatMessage,
+  ].slice(-8);
+
+  nodeConversationMap.value = {
+    ...nodeConversationMap.value,
+    [node.id]: nextHistory,
+  };
+  aiNodeInstruction.value = "";
+  ElMessage.success("已更新选中元素");
+};
 
 const filteredElements = computed(() => {
   const query = keyword.value.trim().toLowerCase();
@@ -826,6 +730,24 @@ const onDragStart = (event: DragEvent, item: PaletteElement) => {
   event.dataTransfer.setData("application/x-edit-element", payload);
   event.dataTransfer.setData("text/plain", payload);
 };
+
+void [
+  Search,
+  typeIconMap,
+  filteredElements,
+  activeModuleLabel,
+  isCollapsed,
+  toggleLayer,
+  layerItems,
+  moveLayer,
+  onLayerDragStart,
+  onLayerDragOver,
+  onLayerDrop,
+  onLayerTailDragOver,
+  onLayerTailDrop,
+  onLayerDragEnd,
+  onDragStart,
+];
 </script>
 <style scoped>
 .wg-palette {
@@ -1078,6 +1000,82 @@ const onDragStart = (event: DragEvent, item: PaletteElement) => {
 .ai-chat-actions :deep(.el-button) {
   border-radius: 8px;
   width: 100%;
+}
+
+.ai-node-target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px dashed #c7d6eb;
+  background: #f6f9ff;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.ai-node-target.empty {
+  background: #f8fafc;
+  border-color: #d7dde8;
+}
+
+.ai-node-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #dbe8ff;
+  color: #31588f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ai-node-id {
+  font-size: 11px;
+  color: #70809a;
+}
+
+.ai-conversation {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid #d9e1ef;
+  background: #ffffff;
+}
+
+.ai-message.user {
+  background: #f6f9ff;
+}
+
+.ai-message-role {
+  font-size: 11px;
+  font-weight: 700;
+  color: #496aa8;
+}
+
+.ai-message-content {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #364256;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ai-empty {
+  border: 1px dashed #d7dde8;
+  border-radius: 10px;
+  padding: 14px 12px;
+  background: #fafbfd;
+  font-size: 12px;
+  color: #7b879d;
 }
 
 .ai-tip {

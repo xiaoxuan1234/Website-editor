@@ -78,9 +78,13 @@ watch(
 <style scoped>
 .text-node {
   display: inline-block;
+  max-width: 100%;
   color: inherit;
   font-size: 15px;
   line-height: 1.55;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .text-node.editable {

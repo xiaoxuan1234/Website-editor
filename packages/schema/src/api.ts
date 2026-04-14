@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PageDocumentV2Schema } from "./editor";
+import { EditorNodeSchema, PageDocumentV2Schema } from "./editor";
 
 export const UserSchema = z.object({
   id: z.string(),
@@ -37,6 +37,10 @@ export const ProjectSchema = z.object({
 });
 
 export const CreateProjectRequestSchema = z.object({
+  name: z.string().min(1),
+});
+
+export const UpdateProjectRequestSchema = z.object({
   name: z.string().min(1),
 });
 
@@ -91,6 +95,26 @@ export const AIPageGenerateResponseSchema = z.object({
   safetyFlags: z.array(z.string()),
 });
 
+export const AIChatMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string().min(1),
+});
+
+export const AINodeModifyRequestSchema = z.object({
+  projectId: z.string(),
+  pageId: z.string(),
+  targetNodeId: z.string(),
+  instruction: z.string().min(1),
+  conversation: z.array(AIChatMessageSchema).optional(),
+  language: z.string().optional(),
+});
+
+export const AINodeModifyResponseSchema = z.object({
+  node: EditorNodeSchema,
+  reasoningSummary: z.string(),
+  safetyFlags: z.array(z.string()),
+});
+
 export const PreviewCreateRequestSchema = z.object({
   pageId: z.string(),
 });
@@ -104,8 +128,12 @@ export const PreviewDocumentResponseSchema = z.object({
 export type AuthLoginRequest = z.infer<typeof AuthLoginRequestSchema>;
 export type AuthLoginResponse = z.infer<typeof AuthLoginResponseSchema>;
 export type Project = z.infer<typeof ProjectSchema>;
+export type UpdateProjectRequest = z.infer<typeof UpdateProjectRequestSchema>;
 export type PageSummary = z.infer<typeof PageSummarySchema>;
+export type AIChatMessage = z.infer<typeof AIChatMessageSchema>;
 export type AIPageGenerateRequest = z.infer<typeof AIPageGenerateRequestSchema>;
 export type AIPageGenerateResponse = z.infer<
   typeof AIPageGenerateResponseSchema
 >;
+export type AINodeModifyRequest = z.infer<typeof AINodeModifyRequestSchema>;
+export type AINodeModifyResponse = z.infer<typeof AINodeModifyResponseSchema>;

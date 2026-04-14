@@ -114,6 +114,7 @@ watch(
 .link {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
   color: inherit;
   text-decoration: none;
   border-bottom: 1px solid currentColor;
@@ -126,6 +127,12 @@ watch(
 
 .link.no-underline {
   border-bottom: 0;
+}
+
+.link-text {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .link-text.editable {

@@ -2,13 +2,18 @@
   <div class="unit-input">
     <el-input
       v-model="inputValue"
-      :disabled="disabled || selectedUnit === 'auto'"
+      :disabled="disabled || isKeywordUnit"
       :placeholder="placeholder"
       @input="emitValue"
     />
     <el-select v-model="selectedUnit" class="unit-select" :disabled="disabled" @change="emitValue">
       <el-option v-for="unit in unitOptions" :key="unit" :label="unit" :value="unit" />
-      <el-option v-if="allowAuto" label="auto" value="auto" />
+      <el-option
+        v-for="keyword in keywordOptions"
+        :key="keyword.value"
+        :label="keyword.label"
+        :value="keyword.value"
+      />
     </el-select>
   </div>
 </template>
@@ -23,12 +28,14 @@ const props = withDefaults(
     placeholder?: string;
     units?: string[];
     allowAuto?: boolean;
+    allowFitContent?: boolean;
   }>(),
   {
     disabled: false,
     placeholder: "",
     units: () => ["px", "%", "em", "rem", "vw", "vh"],
     allowAuto: false,
+    allowFitContent: false,
   }
 );
 
@@ -41,6 +48,18 @@ const inputValue = ref("");
 const syncing = ref(false);
 
 const unitOptions = computed(() => props.units);
+const keywordOptions = computed(() => {
+  const options: Array<{ value: string; label: string }> = [];
+  if (props.allowAuto) {
+    options.push({ value: "auto", label: "自动" });
+  }
+  if (props.allowFitContent) {
+    options.push({ value: "fit-content", label: "适应内容" });
+  }
+  return options;
+});
+const keywordValues = computed(() => keywordOptions.value.map((item) => item.value));
+const isKeywordUnit = computed(() => keywordValues.value.includes(selectedUnit.value));
 const isCompleteNumber = (value: string) => /^-?\d*\.?\d+$/.test(value);
 const isIncompleteNumber = (value: string) =>
   value === "-" || value === "." || value === "-.";
@@ -48,13 +67,13 @@ const isIncompleteNumber = (value: string) =>
 const parseModel = (raw: string) => {
   const value = raw.trim();
 
-  if (props.allowAuto && value === "auto") {
+  if (keywordValues.value.includes(value)) {
     inputValue.value = "";
-    selectedUnit.value = "auto";
+    selectedUnit.value = value;
     return;
   }
 
-  const unitGroup = [...props.units, props.allowAuto ? "auto" : ""].filter(Boolean).join("|");
+  const unitGroup = props.units.join("|");
   const match = value.match(new RegExp(`^(-?\\d*\\.?\\d+)\\s*(${unitGroup})$`));
 
   if (match) {
@@ -78,8 +97,8 @@ const emitValue = () => {
     return;
   }
 
-  if (selectedUnit.value === "auto") {
-    emit("update:modelValue", "auto");
+  if (keywordValues.value.includes(selectedUnit.value)) {
+    emit("update:modelValue", selectedUnit.value);
     return;
   }
 

@@ -1,10 +1,14 @@
-import { z } from "zod";
+﻿import { z } from "zod";
 import {
   DefaultNodePropsByType,
   NodeTypeSchema,
+  type AIChatMessage,
+  type AINodeModifyRequest,
+  type AINodeModifyResponse,
   type AIPageGenerateRequest,
   type AIPageGenerateResponse,
   type EditorNode,
+  type PageDocumentV2,
 } from "@wg/schema";
 
 type StyleValue = string | number | boolean | null;
@@ -18,10 +22,24 @@ const AIPageModelOutputSchema = z.object({
   safetyFlags: z.array(z.string()).optional(),
 });
 
+const AINodeModelOutputSchema = z.object({
+  node: z.any().optional(),
+  reasoningSummary: z.string().optional(),
+  safetyFlags: z.array(z.string()).optional(),
+});
+
 export type AIProvider = {
   generatePageDraft: (
     input: AIPageGenerateRequest,
   ) => Promise<AIPageGenerateResponse>;
+  modifyNodeDraft: (
+    input: AINodeModifyProviderInput,
+  ) => Promise<AINodeModifyResponse>;
+};
+
+export type AINodeModifyProviderInput = AINodeModifyRequest & {
+  pageTitle: string;
+  targetNode: EditorNode;
 };
 
 export type OpenAICompatibleConfig = {
@@ -29,6 +47,9 @@ export type OpenAICompatibleConfig = {
   baseUrl?: string;
   model?: string;
 };
+
+const FONT_STACK =
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -39,10 +60,26 @@ const cloneDefaultProps = (type: keyof typeof DefaultNodePropsByType) =>
     unknown
   >;
 
+const cloneNode = (node: EditorNode): EditorNode =>
+  JSON.parse(JSON.stringify(node)) as EditorNode;
+
+const cloneNodeWithFreshIds = (node: EditorNode): EditorNode => {
+  const next = cloneNode(node);
+  const refresh = (target: EditorNode) => {
+    target.id = createNodeId();
+    target.children.forEach(refresh);
+  };
+  refresh(next);
+  return next;
+};
+
+const createNodeId = () => `node_${Math.random().toString(36).slice(2, 10)}`;
+
 const normalizeStyleRecord = (raw: unknown): StyleRecord => {
   if (!isObject(raw)) {
     return {};
   }
+
   const next: StyleRecord = {};
   Object.entries(raw).forEach(([key, value]) => {
     if (
@@ -54,10 +91,161 @@ const normalizeStyleRecord = (raw: unknown): StyleRecord => {
       next[key] = value;
     }
   });
+
   return next;
 };
 
-const createNodeId = () => `node_${Math.random().toString(36).slice(2, 10)}`;
+const AI_PAGE_SOURCE_PREFIX = "ai-page";
+const UNSAFE_GENERATED_POSITIONS = new Set(["absolute", "fixed", "sticky"]);
+const POSITION_STYLE_KEYS = ["position", "top", "right", "bottom", "left", "inset", "zIndex"] as const;
+
+const hasRenderableStyleValue = (
+  value: StyleValue | undefined,
+): boolean => {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  return String(value).trim() !== "";
+};
+
+const sanitizeGeneratedNodeStyle = (
+  style: StyleRecord,
+  options: {
+    depth: number;
+    parentDisplay: string;
+    nodeType: EditorNode["type"];
+  },
+): StyleRecord => {
+  const next: StyleRecord = { ...style };
+  const position = String(next.position ?? "").trim().toLowerCase();
+
+  if (UNSAFE_GENERATED_POSITIONS.has(position)) {
+    POSITION_STYLE_KEYS.forEach((key) => {
+      delete next[key];
+    });
+  }
+
+  if (options.depth === 0 && !hasRenderableStyleValue(next.width)) {
+    next.width = "100%";
+  }
+
+  if (options.parentDisplay === "flex") {
+    if (!hasRenderableStyleValue(next.minWidth)) {
+      next.minWidth = "0";
+    }
+
+    if (
+      options.nodeType === "container" &&
+      !hasRenderableStyleValue(next.width) &&
+      !hasRenderableStyleValue(next.flex)
+    ) {
+      next.flex = "1 1 0";
+    }
+  }
+
+  if (options.parentDisplay === "grid") {
+    if (!hasRenderableStyleValue(next.minWidth)) {
+      next.minWidth = "0";
+    }
+    if (!hasRenderableStyleValue(next.width)) {
+      next.width = "100%";
+    }
+  }
+
+  return next;
+};
+
+const normalizeGeneratedNodeTree = (
+  node: EditorNode,
+  options: {
+    depth: number;
+    parentDisplay?: string;
+  },
+): EditorNode => {
+  const normalizeAsContainer = node.type === "nav" && node.children.length > 0;
+  const parentDisplay = String(options.parentDisplay ?? "").trim().toLowerCase();
+  const style = sanitizeGeneratedNodeStyle(normalizeStyleRecord(node.style), {
+    depth: options.depth,
+    parentDisplay,
+    nodeType: normalizeAsContainer ? "container" : node.type,
+  });
+  const ownDisplay = String(style.display ?? "").trim().toLowerCase();
+  const props = normalizeAsContainer
+    ? {
+        ...cloneDefaultProps("container"),
+        layout: "flow",
+      }
+    : node.props;
+
+  return {
+    ...node,
+    type: normalizeAsContainer ? "container" : node.type,
+    props,
+    style,
+    children: node.children.map((child) =>
+      normalizeGeneratedNodeTree(child, {
+        depth: options.depth + 1,
+        parentDisplay: ownDisplay,
+      }),
+    ),
+  };
+};
+
+const buildNodeContentSignature = (node: EditorNode): string =>
+  JSON.stringify({
+    type: node.type,
+    content:
+      typeof node.props.content === "string"
+        ? collapseWhitespace(node.props.content)
+        : typeof node.props.label === "string"
+          ? collapseWhitespace(node.props.label)
+          : Array.isArray(node.props.items)
+            ? node.props.items.map((item) => collapseWhitespace(String(item ?? "")))
+            : "",
+    display: String(node.style.display ?? ""),
+    flexDirection: String(node.style.flexDirection ?? ""),
+    gridTemplateColumns: String(node.style.gridTemplateColumns ?? ""),
+    childCount: node.children.length,
+    children: node.children.map((child) => buildNodeContentSignature(child)),
+  });
+
+const dedupeAdjacentTopLevelSections = (nodes: EditorNode[]): EditorNode[] => {
+  const next: EditorNode[] = [];
+  let previousSignature = "";
+
+  nodes.forEach((node) => {
+    const signature = buildNodeContentSignature(node);
+    if (signature === previousSignature) {
+      return;
+    }
+    next.push(node);
+    previousSignature = signature;
+  });
+
+  return next;
+};
+
+export const normalizeAIPageDocument = (
+  document: PageDocumentV2,
+): PageDocumentV2 => {
+  const source = String(document.meta?.source ?? "").trim().toLowerCase();
+  if (!source.startsWith(AI_PAGE_SOURCE_PREFIX)) {
+    return document;
+  }
+
+  return {
+    ...document,
+    root: dedupeAdjacentTopLevelSections(
+      sanitizeGeneratedNodeCopy(
+        document.root.map((node) =>
+        normalizeGeneratedNodeTree(node, {
+          depth: 0,
+        }),
+        ),
+      ),
+    ),
+  };
+};
 
 const createNode = (
   type: keyof typeof DefaultNodePropsByType,
@@ -82,38 +270,57 @@ function sanitizeNodeProps(
 ): Record<string, unknown> {
   const defaults = cloneDefaultProps(type);
   const merged = { ...defaults };
-  for (const [k, v] of Object.entries(rawProps)) {
-    if (v === undefined) continue;
-    if (type === "title" && k === "level") {
-      const level = String(v).toLowerCase();
+
+  for (const [key, value] of Object.entries(rawProps)) {
+    if (value === undefined) {
+      continue;
+    }
+
+    if (type === "title" && key === "level") {
+      const level = String(value).toLowerCase();
       if (["h1", "h2", "h3", "h4", "h5", "h6"].includes(level)) {
-        merged[k] = level;
+        merged[key] = level;
       }
       continue;
     }
-    if (type === "button" && k === "variant") {
-      const variant = String(v).toLowerCase();
-      if (["primary", "secondary", "outline"].includes(variant)) {
-        merged[k] = variant;
+
+    if (type === "button" && key === "variant") {
+      const variant = String(value).toLowerCase();
+      const normalizedVariant =
+        variant === "secondary" ? "soft" : variant;
+      if (["primary", "outline", "soft"].includes(normalizedVariant)) {
+        merged[key] = normalizedVariant;
       }
       continue;
     }
-    if (type === "input" && k === "type") {
-      const t = String(v).toLowerCase();
-      if (["text", "email", "password", "number", "tel", "url"].includes(t)) {
-        merged[k] = t;
+
+    if (type === "input" && key === "type") {
+      const inputType = String(value).toLowerCase();
+      if (["text", "email", "password", "number", "tel", "url"].includes(inputType)) {
+        merged[key] = inputType;
       }
       continue;
     }
-    if (type === "list" && k === "listStyleType") {
-      const s = String(v).toLowerCase();
-      if (["disc", "decimal", "none"].includes(s)) {
-        merged[k] = s;
+
+    if (type === "list" && key === "listStyleType") {
+      const listStyleType = String(value).toLowerCase();
+      if (["disc", "circle", "square", "decimal", "none"].includes(listStyleType)) {
+        merged[key] = listStyleType;
       }
       continue;
     }
-    merged[k] = v;
+
+    if (type === "table" && (key === "rows" || key === "cols")) {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric) && numeric > 0) {
+        merged[key] = Math.max(1, Math.min(12, Math.round(numeric)));
+      }
+      continue;
+    }
+
+    merged[key] = value;
   }
+
   return merged;
 }
 
@@ -121,65 +328,310 @@ const normalizeNode = (raw: unknown): EditorNode | null => {
   if (!isObject(raw)) {
     return null;
   }
+
   const typeParsed = NodeTypeSchema.safeParse(String(raw.type ?? ""));
   if (!typeParsed.success) {
     return null;
   }
+
   const type = typeParsed.data;
   const rawProps = isObject(raw.props) ? raw.props : {};
   const rawChildren = Array.isArray(raw.children) ? raw.children : [];
   const children = rawChildren
-    .map((child: unknown) => normalizeNode(child))
+    .map((child) => normalizeNode(child))
     .filter((child): child is EditorNode => Boolean(child));
 
-  const props = sanitizeNodeProps(type, rawProps);
-  return createNode(type, props, normalizeStyleRecord(raw.style), children);
+  return createNode(
+    type,
+    sanitizeNodeProps(type, rawProps),
+    normalizeStyleRecord(raw.style),
+    children,
+  );
 };
 
-function createHeroSection(
+const inferPageTypeFromInstruction = (instruction: string): string => {
+  const lower = instruction.trim().toLowerCase();
+  if (/product|shop|store/.test(lower)) {
+    return "product";
+  }
+  if (/contact|service|support/.test(lower)) {
+    return "contact";
+  }
+  if (/portfolio|case|work/.test(lower)) {
+    return "portfolio";
+  }
+  if (/business|company|enterprise/.test(lower)) {
+    return "business";
+  }
+  if (/landing|campaign|promo/.test(lower)) {
+    return "landing";
+  }
+  return "home";
+};
+
+const createHeroSection = (
   title: string,
   subtitle: string,
   primaryColor: string,
-  backgroundColor: string = "#f8f9fa",
-): EditorNode {
-  return createNode(
+  backgroundColor: string,
+): EditorNode =>
+  createNode(
     "container",
     { layout: "flow" },
     {
       width: "100%",
-      padding: "120px 40px",
+      minHeight: "520px",
+      padding: "96px 40px",
       backgroundColor,
-      textAlign: "center",
-      minHeight: "600px",
       display: "flex",
       flexDirection: "column",
       justifyContent: "center",
       alignItems: "center",
-      position: "relative",
-      overflow: "hidden",
+      textAlign: "center",
+      gap: "20px",
     },
     [
       createNode(
         "title",
         { content: title, level: "h1" },
         {
-          fontSize: "56px",
+          fontSize: "52px",
           fontWeight: "700",
           color: "#1a1a1a",
-          marginBottom: "28px",
           lineHeight: "1.15",
-          letterSpacing: "-0.02em",
+          maxWidth: "860px",
         },
       ),
       createNode(
         "paragraph",
         { content: subtitle },
         {
-          fontSize: "20px",
-          color: "#666666",
+          fontSize: "18px",
           lineHeight: "1.8",
-          maxWidth: "720px",
-          margin: "0 auto 48px",
+          color: "#566074",
+          maxWidth: "760px",
+        },
+      ),
+      createNode(
+        "button",
+        { label: "Get started", variant: "primary" },
+        {
+          width: "fit-content",
+          padding: "14px 28px",
+          backgroundColor: primaryColor,
+          color: "#ffffff",
+        },
+      ),
+    ],
+  );
+
+const createFeatureCard = (
+  title: string,
+  description: string,
+): EditorNode =>
+  createNode(
+    "container",
+    { layout: "flow" },
+    {
+      width: "100%",
+      padding: "24px",
+      border: "1px solid #e4e7ec",
+      backgroundColor: "#ffffff",
+      display: "flex",
+      flexDirection: "column",
+      gap: "12px",
+    },
+    [
+      createNode(
+        "title",
+        { content: title, level: "h3" },
+        { fontSize: "24px", fontWeight: "600", color: "#182230" },
+      ),
+      createNode(
+        "paragraph",
+        { content: description },
+        { fontSize: "15px", lineHeight: "1.7", color: "#475467" },
+      ),
+    ],
+  );
+
+const createFeatureSection = (
+  titles: string[],
+  primaryColor: string,
+): EditorNode => {
+  const cards = titles.slice(0, 3).map((title, index) =>
+    createFeatureCard(
+      title,
+      [
+        "Clear structure that is easy to keep editing.",
+        "Responsive layout and concise copy for static pages.",
+        "Consistent visual hierarchy with editable content blocks.",
+      ][index] ?? "A focused section aligned with the requested goal.",
+    ),
+  );
+
+  return createNode(
+    "container",
+    { layout: "flow" },
+    {
+      width: "100%",
+      padding: "72px 40px",
+      display: "flex",
+      flexDirection: "column",
+      gap: "28px",
+      backgroundColor: "#ffffff",
+    },
+    [
+      createNode(
+        "title",
+        { content: "Key sections", level: "h2" },
+        { fontSize: "36px", fontWeight: "700", color: "#111827" },
+      ),
+      createNode(
+        "container",
+        { layout: "flow" },
+        {
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: "20px",
+        },
+        cards.length > 0
+          ? cards
+          : [
+              createFeatureCard("Feature", "A focused section aligned with the requested goal."),
+              createFeatureCard("Value", "A focused section aligned with the requested goal."),
+              createFeatureCard("Action", "A focused section aligned with the requested goal."),
+            ],
+      ),
+      createNode(
+        "button",
+        { label: "Explore more", variant: "outline" },
+        {
+          width: "fit-content",
+          padding: "12px 24px",
+          border: `1px solid ${primaryColor}`,
+          color: primaryColor,
+          backgroundColor: "#ffffff",
+        },
+      ),
+    ],
+  );
+};
+
+const createContentSection = (
+  title: string,
+  body: string,
+  backgroundColor = "#f8fafc",
+): EditorNode =>
+  createNode(
+    "container",
+    { layout: "flow" },
+    {
+      width: "100%",
+      padding: "72px 40px",
+      backgroundColor,
+      display: "flex",
+      flexDirection: "column",
+      gap: "16px",
+    },
+    [
+      createNode(
+        "title",
+        { content: title, level: "h2" },
+        { fontSize: "34px", fontWeight: "700", color: "#101828" },
+      ),
+      createNode(
+        "paragraph",
+        { content: body },
+        {
+          fontSize: "16px",
+          lineHeight: "1.8",
+          color: "#475467",
+          maxWidth: "760px",
+        },
+      ),
+    ],
+  );
+
+const createCtaSection = (
+  primaryColor: string,
+  title: string,
+  body: string,
+  buttonLabel = "Contact us",
+): EditorNode =>
+  createNode(
+    "container",
+    { layout: "flow" },
+    {
+      width: "100%",
+      padding: "72px 40px",
+      backgroundColor: primaryColor,
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      textAlign: "center",
+      gap: "18px",
+    },
+    [
+      createNode(
+        "title",
+        { content: title, level: "h2" },
+        { fontSize: "36px", fontWeight: "700", color: "#ffffff" },
+      ),
+      createNode(
+        "paragraph",
+        { content: body },
+        {
+          fontSize: "16px",
+          lineHeight: "1.8",
+          color: "#e8efff",
+          maxWidth: "680px",
+        },
+      ),
+      createNode(
+        "button",
+        { label: buttonLabel, variant: "soft" },
+        {
+          width: "fit-content",
+          padding: "14px 28px",
+          backgroundColor: "#ffffff",
+          color: primaryColor,
+        },
+      ),
+    ],
+  );
+
+const createNavigationSection = (
+  brand: string,
+  labels: {
+    links: string[];
+    secondaryAction: string;
+    primaryAction: string;
+  },
+  primaryColor: string,
+): EditorNode =>
+  createNode(
+    "container",
+    { layout: "flow" },
+    {
+      width: "100%",
+      padding: "22px 40px",
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      gap: "24px",
+      backgroundColor: "#ffffff",
+      borderBottom: "1px solid #e8edf5",
+    },
+    [
+      createNode(
+        "title",
+        { content: brand, level: "h3" },
+        {
+          fontSize: "26px",
+          fontWeight: "700",
+          color: "#0f172a",
+          lineHeight: "1.2",
         },
       ),
       createNode(
@@ -187,191 +639,124 @@ function createHeroSection(
         { layout: "flow" },
         {
           display: "flex",
-          gap: "24px",
-          justifyContent: "center",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: "14px",
           flexWrap: "wrap",
+          minWidth: "0",
         },
         [
+          ...labels.links.map((label) =>
+            createNode(
+              "link",
+              {
+                label,
+                href: "https://example.com",
+                underline: false,
+                target: "_self",
+              },
+              {
+                color: "#334155",
+                fontSize: "15px",
+              },
+            ),
+          ),
           createNode(
             "button",
-            { label: "立即开始", variant: "primary" },
+            { label: labels.secondaryAction, variant: "outline", size: "md" },
             {
-              padding: "18px 48px",
-              backgroundColor: primaryColor,
-              color: "#ffffff",
+              padding: "10px 18px",
+              border: `1px solid ${primaryColor}`,
+              color: primaryColor,
+              backgroundColor: "#ffffff",
               borderRadius: "12px",
-              fontSize: "18px",
-              fontWeight: "600",
-              cursor: "pointer",
-              boxShadow: `0 6px 20px ${primaryColor}50`,
-              transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
             },
           ),
           createNode(
             "button",
-            { label: "了解更多", variant: "outline" },
+            { label: labels.primaryAction, variant: "primary", size: "md" },
             {
-              padding: "18px 48px",
-              backgroundColor: "transparent",
-              color: primaryColor,
+              padding: "10px 18px",
+              backgroundColor: primaryColor,
+              color: "#ffffff",
               borderRadius: "12px",
-              fontSize: "18px",
-              fontWeight: "600",
-              cursor: "pointer",
-              border: `2px solid ${primaryColor}`,
-              transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
             },
           ),
         ],
       ),
     ],
   );
-}
 
-function createFeatureCard(
+const createHeroShowcaseSection = (
   title: string,
-  description: string,
+  subtitle: string,
+  labels: {
+    eyebrow: string;
+    primaryAction: string;
+    secondaryAction: string;
+    quickPoints: string[];
+    metricTitle: string;
+    metricBody: string;
+    sideCards: Array<{ title: string; body: string }>;
+  },
   primaryColor: string,
-  icon: string = "✓",
-): EditorNode {
-  return createNode(
-    "container",
-    { layout: "flow" },
-    {
-      width: "340px",
-      padding: "48px 36px",
-      backgroundColor: "#ffffff",
-      borderRadius: "20px",
-      boxShadow: "0 8px 30px rgba(0,0,0,0.06)",
-      textAlign: "center",
-      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-    },
-    [
-      createNode(
-        "title",
-        { content: icon, level: "h2" },
-        {
-          fontSize: "56px",
-          marginBottom: "24px",
-          color: primaryColor,
-          lineHeight: "1",
-        },
-      ),
-      createNode(
-        "title",
-        { content: title, level: "h3" },
-        {
-          fontSize: "22px",
-          fontWeight: "600",
-          color: "#1a1a1a",
-          marginBottom: "16px",
-          letterSpacing: "-0.01em",
-        },
-      ),
-      createNode(
-        "paragraph",
-        { content: description },
-        {
-          fontSize: "15px",
-          color: "#666666",
-          lineHeight: "1.7",
-        },
-      ),
-    ],
-  );
-}
-
-function createFeaturesSection(
-  primaryColor: string,
-  features: Array<{ title: string; description: string; icon?: string }>,
-): EditorNode {
-  return createNode(
+  secondaryColor: string,
+  backgroundColor: string,
+): EditorNode =>
+  createNode(
     "container",
     { layout: "flow" },
     {
       width: "100%",
-      padding: "100px 40px",
-      backgroundColor: "#ffffff",
+      padding: "72px 40px 88px",
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      gap: "32px",
+      background: `linear-gradient(180deg, ${backgroundColor} 0%, #ffffff 100%)`,
+      backgroundColor,
     },
     [
-      createNode(
-        "title",
-        { content: "我们的优势", level: "h2" },
-        {
-          fontSize: "40px",
-          fontWeight: "700",
-          color: "#1a1a1a",
-          textAlign: "center",
-          marginBottom: "20px",
-        },
-      ),
-      createNode(
-        "paragraph",
-        { content: "探索我们提供的专业服务和解决方案" },
-        {
-          fontSize: "18px",
-          color: "#666666",
-          textAlign: "center",
-          marginBottom: "60px",
-        },
-      ),
       createNode(
         "container",
         { layout: "flow" },
         {
           display: "flex",
-          gap: "32px",
-          justifyContent: "center",
-          flexWrap: "wrap",
-        },
-        features.map((f) =>
-          createFeatureCard(f.title, f.description, primaryColor, f.icon),
-        ),
-      ),
-    ],
-  );
-}
-
-function createAboutSection(primaryColor: string): EditorNode {
-  return createNode(
-    "container",
-    { layout: "flow" },
-    {
-      width: "100%",
-      padding: "100px 40px",
-      backgroundColor: "#f8f9fa",
-    },
-    [
-      createNode(
-        "container",
-        { layout: "flow" },
-        {
-          maxWidth: "900px",
-          margin: "0 auto",
-          textAlign: "center",
+          flexDirection: "column",
+          alignItems: "flex-start",
+          gap: "18px",
+          flex: "1 1 0",
+          minWidth: "0",
         },
         [
           createNode(
-            "title",
-            { content: "关于我们", level: "h2" },
+            "text",
+            { content: labels.eyebrow },
             {
-              fontSize: "40px",
-              fontWeight: "700",
-              color: "#1a1a1a",
-              marginBottom: "32px",
+              fontSize: "14px",
+              fontWeight: "600",
+              color: primaryColor,
+              letterSpacing: "0.08em",
+            },
+          ),
+          createNode(
+            "title",
+            { content: title, level: "h1" },
+            {
+              fontSize: "52px",
+              fontWeight: "800",
+              color: "#0f172a",
+              lineHeight: "1.12",
             },
           ),
           createNode(
             "paragraph",
-            {
-              content:
-                "我们是一支充满激情的团队，致力于为客户提供最优质的产品和服务。凭借多年的行业经验，我们帮助众多企业实现了数字化转型，提升了业务效率。",
-            },
+            { content: subtitle },
             {
               fontSize: "18px",
-              color: "#555555",
               lineHeight: "1.8",
-              marginBottom: "40px",
+              color: "#526072",
+              maxWidth: "640px",
             },
           ),
           createNode(
@@ -379,1126 +764,1457 @@ function createAboutSection(primaryColor: string): EditorNode {
             { layout: "flow" },
             {
               display: "flex",
-              gap: "60px",
-              justifyContent: "center",
               flexWrap: "wrap",
+              gap: "12px",
+              alignItems: "center",
             },
             [
-              createStatCard("10+", "年行业经验", primaryColor),
-              createStatCard("500+", "成功案例", primaryColor),
-              createStatCard("98%", "客户满意度", primaryColor),
+              createNode(
+                "button",
+                { label: labels.primaryAction, variant: "primary", size: "lg" },
+                {
+                  padding: "14px 28px",
+                  backgroundColor: primaryColor,
+                  color: "#ffffff",
+                  borderRadius: "14px",
+                  boxShadow: "0 12px 24px rgba(37, 99, 235, 0.18)",
+                },
+              ),
+              createNode(
+                "button",
+                { label: labels.secondaryAction, variant: "outline", size: "lg" },
+                {
+                  padding: "14px 28px",
+                  border: "1px solid #c8d4e8",
+                  color: "#1e293b",
+                  backgroundColor: "#ffffff",
+                  borderRadius: "14px",
+                },
+              ),
             ],
           ),
+          createNode(
+            "container",
+            { layout: "flow" },
+            {
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "10px",
+              minWidth: "0",
+            },
+            labels.quickPoints.map((item) =>
+              createNode(
+                "container",
+                { layout: "flow" },
+                {
+                  width: "fit-content",
+                  padding: "10px 14px",
+                  borderRadius: "999px",
+                  backgroundColor: "#ffffff",
+                  border: "1px solid #d9e3f2",
+                },
+                [
+                  createNode(
+                    "text",
+                    { content: item },
+                    {
+                      fontSize: "13px",
+                      color: "#334155",
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
-      ),
-    ],
-  );
-}
-
-function createStatCard(
-  number: string,
-  label: string,
-  primaryColor: string,
-): EditorNode {
-  return createNode(
-    "container",
-    { layout: "flow" },
-    {
-      textAlign: "center",
-    },
-    [
-      createNode(
-        "title",
-        { content: number, level: "h2" },
-        {
-          fontSize: "48px",
-          fontWeight: "700",
-          color: primaryColor,
-          marginBottom: "8px",
-        },
-      ),
-      createNode(
-        "paragraph",
-        { content: label },
-        {
-          fontSize: "16px",
-          color: "#666666",
-        },
-      ),
-    ],
-  );
-}
-
-function createContactSection(primaryColor: string): EditorNode {
-  return createNode(
-    "container",
-    { layout: "flow" },
-    {
-      width: "100%",
-      padding: "100px 40px",
-      backgroundColor: "#ffffff",
-    },
-    [
-      createNode(
-        "title",
-        { content: "联系我们", level: "h2" },
-        {
-          fontSize: "40px",
-          fontWeight: "700",
-          color: "#1a1a1a",
-          textAlign: "center",
-          marginBottom: "60px",
-        },
       ),
       createNode(
         "container",
         { layout: "flow" },
         {
-          maxWidth: "700px",
-          margin: "0 auto",
-          padding: "48px",
-          backgroundColor: "#f8f9fa",
-          borderRadius: "16px",
-          boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
-        },
-        [
-          createNode(
-            "input",
-            { placeholder: "您的姓名", type: "text" },
-            {
-              width: "100%",
-              padding: "16px",
-              marginBottom: "20px",
-              borderRadius: "10px",
-              fontSize: "16px",
-              border: "2px solid #e0e0e0",
-              backgroundColor: "#ffffff",
-            },
-          ),
-          createNode(
-            "input",
-            { placeholder: "您的邮箱", type: "email" },
-            {
-              width: "100%",
-              padding: "16px",
-              marginBottom: "20px",
-              borderRadius: "10px",
-              fontSize: "16px",
-              border: "2px solid #e0e0e0",
-              backgroundColor: "#ffffff",
-            },
-          ),
-          createNode(
-            "input",
-            { placeholder: "您的留言内容", type: "text" },
-            {
-              width: "100%",
-              padding: "16px",
-              marginBottom: "28px",
-              borderRadius: "10px",
-              fontSize: "16px",
-              border: "2px solid #e0e0e0",
-              backgroundColor: "#ffffff",
-              minHeight: "120px",
-            },
-          ),
-          createNode(
-            "button",
-            { label: "发送消息", variant: "primary" },
-            {
-              width: "100%",
-              padding: "18px",
-              backgroundColor: primaryColor,
-              color: "#ffffff",
-              borderRadius: "10px",
-              fontSize: "18px",
-              fontWeight: "600",
-              cursor: "pointer",
-            },
-          ),
-        ],
-      ),
-    ],
-  );
-}
-
-function createCTASection(
-  primaryColor: string,
-  title: string = "准备开始了吗？",
-  subtitle: string = "立即联系我们，获取专属解决方案",
-): EditorNode {
-  return createNode(
-    "container",
-    { layout: "flow" },
-    {
-      width: "100%",
-      padding: "100px 40px",
-      backgroundColor: primaryColor,
-      textAlign: "center",
-    },
-    [
-      createNode(
-        "title",
-        { content: title, level: "h2" },
-        {
-          fontSize: "40px",
-          fontWeight: "700",
-          color: "#ffffff",
-          marginBottom: "20px",
-        },
-      ),
-      createNode(
-        "paragraph",
-        { content: subtitle },
-        {
-          fontSize: "20px",
-          color: "#ffffffcc",
-          marginBottom: "40px",
-        },
-      ),
-      createNode(
-        "button",
-        { label: "立即咨询", variant: "secondary" },
-        {
-          padding: "16px 48px",
-          backgroundColor: "#ffffff",
-          color: primaryColor,
-          borderRadius: "10px",
-          fontSize: "18px",
-          fontWeight: "600",
-          cursor: "pointer",
-        },
-      ),
-    ],
-  );
-}
-
-function createTestimonialsSection(primaryColor: string): EditorNode {
-  return createNode(
-    "container",
-    { layout: "flow" },
-    {
-      width: "100%",
-      padding: "100px 40px",
-      backgroundColor: "#ffffff",
-    },
-    [
-      createNode(
-        "title",
-        { content: "客户评价", level: "h2" },
-        {
-          fontSize: "40px",
-          fontWeight: "700",
-          color: "#1a1a1a",
-          textAlign: "center",
-          marginBottom: "60px",
-        },
-      ),
-      createNode(
-        "container",
-        { layout: "flow" },
-        {
+          flex: "1 1 0",
+          minWidth: "0",
+          padding: "22px",
+          borderRadius: "28px",
+          background: `linear-gradient(135deg, ${primaryColor}18 0%, ${secondaryColor}14 100%)`,
+          backgroundColor: "#edf4ff",
+          boxShadow: "0 26px 60px rgba(15, 23, 42, 0.12)",
           display: "flex",
-          gap: "32px",
-          justifyContent: "center",
-          flexWrap: "wrap",
+          flexDirection: "column",
+          gap: "16px",
         },
         [
-          createTestimonialCard(
-            "非常专业的团队，为我们提供了卓越的解决方案。",
-            "张先生",
-            "CEO",
-            primaryColor,
+          createNode(
+            "container",
+            { layout: "flow" },
+            {
+              padding: "20px",
+              borderRadius: "22px",
+              backgroundColor: "#ffffff",
+              boxShadow: "0 10px 28px rgba(15, 23, 42, 0.08)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "8px",
+            },
+            [
+              createNode(
+                "title",
+                { content: labels.metricTitle, level: "h3" },
+                { fontSize: "24px", fontWeight: "700", color: "#0f172a" },
+              ),
+              createNode(
+                "paragraph",
+                { content: labels.metricBody },
+                { fontSize: "14px", lineHeight: "1.7", color: "#526072" },
+              ),
+            ],
           ),
-          createTestimonialCard(
-            "服务态度很好，响应速度快，产品质量超出预期。",
-            "李女士",
-            "产品经理",
-            primaryColor,
-          ),
-          createTestimonialCard(
-            "合作非常愉快，强烈推荐！",
-            "王先生",
-            "技术总监",
-            primaryColor,
+          createNode(
+            "container",
+            { layout: "flow" },
+            {
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: "14px",
+            },
+            labels.sideCards.map((item, index) =>
+              createNode(
+                "container",
+                { layout: "flow" },
+                {
+                  padding: "18px",
+                  borderRadius: "20px",
+                  backgroundColor: index === 0 ? "#ffffff" : "#f8fbff",
+                  border: "1px solid rgba(148, 163, 184, 0.18)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "8px",
+                },
+                [
+                  createNode(
+                    "title",
+                    { content: item.title, level: "h4" },
+                    { fontSize: "18px", fontWeight: "700", color: "#0f172a" },
+                  ),
+                  createNode(
+                    "paragraph",
+                    { content: item.body },
+                    { fontSize: "13px", lineHeight: "1.6", color: "#526072" },
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
     ],
   );
-}
 
-function createTestimonialCard(
-  quote: string,
-  name: string,
-  role: string,
+const createEnhancedFeatureSection = (
+  sectionTitle: string,
+  cards: Array<{ eyebrow: string; title: string; body: string }>,
   primaryColor: string,
-): EditorNode {
-  return createNode(
-    "container",
-    { layout: "flow" },
-    {
-      width: "360px",
-      padding: "48px",
-      backgroundColor: "#ffffff",
-      borderRadius: "20px",
-      boxShadow: "0 8px 30px rgba(0,0,0,0.06)",
-      position: "relative",
-    },
-    [
-      createNode(
-        "title",
-        { content: '"', level: "h2" },
-        {
-          fontSize: "64px",
-          color: primaryColor,
-          lineHeight: "1",
-          marginBottom: "20px",
-        },
-      ),
-      createNode(
-        "paragraph",
-        { content: quote },
-        {
-          fontSize: "16px",
-          color: "#555555",
-          lineHeight: "1.8",
-          marginBottom: "28px",
-        },
-      ),
-      createNode(
-        "title",
-        { content: name, level: "h4" },
-        {
-          fontSize: "18px",
-          fontWeight: "600",
-          color: "#1a1a1a",
-          marginBottom: "6px",
-          letterSpacing: "-0.01em",
-        },
-      ),
-      createNode(
-        "paragraph",
-        { content: role },
-        {
-          fontSize: "14px",
-          color: primaryColor,
-          fontWeight: "500",
-        },
-      ),
-    ],
-  );
-}
-
-function createServicesSection(primaryColor: string): EditorNode {
-  return createNode(
+): EditorNode =>
+  createNode(
     "container",
     { layout: "flow" },
     {
       width: "100%",
-      padding: "100px 40px",
-      backgroundColor: "#f8f9fa",
-    },
-    [
-      createNode(
-        "title",
-        { content: "我们的服务", level: "h2" },
-        {
-          fontSize: "40px",
-          fontWeight: "700",
-          color: "#1a1a1a",
-          textAlign: "center",
-          marginBottom: "20px",
-        },
-      ),
-      createNode(
-        "paragraph",
-        { content: "全方位的专业服务，满足您的各种需求" },
-        {
-          fontSize: "18px",
-          color: "#666666",
-          textAlign: "center",
-          marginBottom: "60px",
-        },
-      ),
-      createNode(
-        "container",
-        { layout: "flow" },
-        {
-          display: "flex",
-          gap: "24px",
-          justifyContent: "center",
-          flexWrap: "wrap",
-        },
-        [
-          createServiceCard(
-            "网站设计",
-            "专业的UI/UX设计，打造美观实用的网站",
-            "🎨",
-            primaryColor,
-          ),
-          createServiceCard(
-            "前端开发",
-            "现代化的前端技术栈，高性能的用户体验",
-            "💻",
-            primaryColor,
-          ),
-          createServiceCard(
-            "后端开发",
-            "稳定可靠的后端架构，数据安全有保障",
-            "⚙️",
-            primaryColor,
-          ),
-          createServiceCard(
-            "移动端开发",
-            "响应式设计，完美适配各种设备",
-            "📱",
-            primaryColor,
-          ),
-          createServiceCard(
-            "SEO优化",
-            "搜索引擎优化，提升网站排名",
-            "🔍",
-            primaryColor,
-          ),
-          createServiceCard(
-            "技术支持",
-            "7x24小时技术支持，随时为您服务",
-            "🛠️",
-            primaryColor,
-          ),
-        ],
-      ),
-    ],
-  );
-}
-
-function createServiceCard(
-  title: string,
-  description: string,
-  icon: string,
-  primaryColor: string,
-): EditorNode {
-  return createNode(
-    "container",
-    { layout: "flow" },
-    {
-      width: "340px",
-      padding: "40px",
-      backgroundColor: "#ffffff",
-      borderRadius: "16px",
-      boxShadow: "0 6px 24px rgba(0,0,0,0.06)",
-      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-    },
-    [
-      createNode(
-        "title",
-        { content: icon, level: "h2" },
-        {
-          fontSize: "48px",
-          marginBottom: "24px",
-          color: primaryColor,
-        },
-      ),
-      createNode(
-        "title",
-        { content: title, level: "h3" },
-        {
-          fontSize: "20px",
-          fontWeight: "600",
-          color: "#1a1a1a",
-          marginBottom: "12px",
-          letterSpacing: "-0.01em",
-        },
-      ),
-      createNode(
-        "paragraph",
-        { content: description },
-        {
-          fontSize: "15px",
-          color: "#666666",
-          lineHeight: "1.7",
-        },
-      ),
-    ],
-  );
-}
-
-function createGallerySection(primaryColor: string): EditorNode {
-  return createNode(
-    "container",
-    { layout: "flow" },
-    {
-      width: "100%",
-      padding: "100px 40px",
+      padding: "80px 40px",
+      display: "flex",
+      flexDirection: "column",
+      gap: "28px",
       backgroundColor: "#ffffff",
     },
     [
       createNode(
         "title",
-        { content: "作品展示", level: "h2" },
-        {
-          fontSize: "40px",
-          fontWeight: "700",
-          color: "#1a1a1a",
-          textAlign: "center",
-          marginBottom: "60px",
-        },
+        { content: sectionTitle, level: "h2" },
+        { fontSize: "36px", fontWeight: "700", color: "#111827" },
       ),
       createNode(
         "container",
         { layout: "flow" },
         {
           display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
-          gap: "24px",
-          maxWidth: "1200px",
-          margin: "0 auto",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: "18px",
         },
-        [
-          createGalleryItem("项目一", primaryColor),
-          createGalleryItem("项目二", primaryColor),
-          createGalleryItem("项目三", primaryColor),
-          createGalleryItem("项目四", primaryColor),
-          createGalleryItem("项目五", primaryColor),
-          createGalleryItem("项目六", primaryColor),
-        ],
+        cards.map((card) =>
+          createNode(
+            "container",
+            { layout: "flow" },
+            {
+              padding: "24px",
+              borderRadius: "20px",
+              border: "1px solid #e5eaf3",
+              backgroundColor: "#ffffff",
+              boxShadow: "0 10px 28px rgba(15, 23, 42, 0.06)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "10px",
+            },
+            [
+              createNode(
+                "text",
+                { content: card.eyebrow },
+                { fontSize: "12px", fontWeight: "600", color: primaryColor },
+              ),
+              createNode(
+                "title",
+                { content: card.title, level: "h3" },
+                { fontSize: "22px", fontWeight: "700", color: "#182230" },
+              ),
+              createNode(
+                "paragraph",
+                { content: card.body },
+                { fontSize: "15px", lineHeight: "1.75", color: "#475467" },
+              ),
+            ],
+          ),
+        ),
       ),
     ],
   );
-}
 
-function createGalleryItem(title: string, primaryColor: string): EditorNode {
-  return createNode(
+const createSocialProofSection = (
+  title: string,
+  cards: Array<{ title: string; body: string }>,
+): EditorNode =>
+  createNode(
     "container",
     { layout: "flow" },
     {
-      aspectRatio: "1",
-      backgroundColor: "#f0f0f0",
-      borderRadius: "12px",
+      width: "100%",
+      padding: "80px 40px",
+      backgroundColor: "#f8fafc",
       display: "flex",
       flexDirection: "column",
-      justifyContent: "center",
-      alignItems: "center",
-      padding: "32px",
-      minHeight: "280px",
+      gap: "24px",
     },
     [
       createNode(
         "title",
-        { content: "🖼️", level: "h2" },
-        {
-          fontSize: "48px",
-          marginBottom: "16px",
-          color: primaryColor,
-        },
-      ),
-      createNode(
-        "title",
-        { content: title, level: "h3" },
-        {
-          fontSize: "18px",
-          fontWeight: "600",
-          color: "#1a1a1a",
-        },
-      ),
-    ],
-  );
-}
-
-function createFAQSection(primaryColor: string): EditorNode {
-  return createNode(
-    "container",
-    { layout: "flow" },
-    {
-      width: "100%",
-      padding: "100px 40px",
-      backgroundColor: "#f8f9fa",
-    },
-    [
-      createNode(
-        "title",
-        { content: "常见问题", level: "h2" },
-        {
-          fontSize: "40px",
-          fontWeight: "700",
-          color: "#1a1a1a",
-          textAlign: "center",
-          marginBottom: "60px",
-        },
+        { content: title, level: "h2" },
+        { fontSize: "34px", fontWeight: "700", color: "#101828" },
       ),
       createNode(
         "container",
         { layout: "flow" },
         {
-          maxWidth: "800px",
-          margin: "0 auto",
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+          gap: "18px",
         },
-        [
-          createFAQItem(
-            "如何开始使用？",
-            "您可以通过我们的网站注册账号，然后选择适合您的套餐即可开始使用。",
-            primaryColor,
+        cards.map((item) =>
+          createNode(
+            "container",
+            { layout: "flow" },
+            {
+              padding: "22px",
+              borderRadius: "20px",
+              backgroundColor: "#ffffff",
+              border: "1px solid #e5eaf3",
+              boxShadow: "0 10px 26px rgba(15, 23, 42, 0.05)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "10px",
+            },
+            [
+              createNode(
+                "title",
+                { content: item.title, level: "h3" },
+                { fontSize: "22px", fontWeight: "700", color: "#182230" },
+              ),
+              createNode(
+                "paragraph",
+                { content: item.body },
+                { fontSize: "15px", lineHeight: "1.75", color: "#475467" },
+              ),
+            ],
           ),
-          createFAQItem(
-            "支持哪些支付方式？",
-            "我们支持支付宝、微信支付、银行卡等多种支付方式。",
-            primaryColor,
-          ),
-          createFAQItem(
-            "有免费试用期吗？",
-            "是的，我们提供7天免费试用期，让您充分体验我们的产品。",
-            primaryColor,
-          ),
-          createFAQItem(
-            "如何联系客服？",
-            "您可以通过在线客服、电话或邮件联系我们，我们将在24小时内回复。",
-            primaryColor,
-          ),
+        ),
+      ),
+    ],
+  );
+
+const buildFallbackSections = (input: AIPageGenerateRequest): EditorNode[] => {
+  const primaryColor = input.primaryColor || "#3366ff";
+  const secondaryColor = input.secondaryColor || "#f97316";
+  const backgroundColor = input.backgroundColor || "#f5f7fb";
+  const pageType = input.pageType || inferPageTypeFromInstruction(input.instruction);
+  const preferChinese = /[\u4e00-\u9fff]/u.test(input.instruction);
+  const highlights = buildInstructionHighlights(input.instruction, 5, 56).filter(
+    (item) => !isInstructionalCopy(item),
+  );
+  const fallbackTitle = preferChinese
+    ? /教育|课程|学习/u.test(input.instruction)
+      ? "搭建更清晰的在线教育首页"
+      : pageType === "contact"
+        ? "让沟通入口更直接清晰"
+        : "打造清晰专业的品牌首页"
+    : /education|course|learning/i.test(input.instruction)
+      ? "Build a clearer online learning homepage"
+      : pageType === "contact"
+        ? "Make the contact path clearer"
+        : "Build a polished brand homepage";
+  const fallbackSubtitle = preferChinese
+    ? "围绕核心价值、重点内容和行动按钮组织页面，保证结构清晰、分区稳定，并适合后续继续编辑。"
+    : "Organize the page around value, key sections, and a clear CTA while keeping the layout stable and editable.";
+  const mainTitle =
+    compactText(highlights[0] ?? "", 48) || fallbackTitle;
+  const subtitle =
+    compactText(
+      highlights.slice(1).join(". ") || fallbackSubtitle,
+      180,
+    ) || fallbackSubtitle;
+  const featureTitles = sanitizeStringList(input.sections, 4, 24) ?? [];
+
+  const copy = preferChinese
+    ? {
+        brand: "品牌空间",
+        navLinks: ["首页", "方案", "案例", "关于我们"],
+        secondaryAction: "了解更多",
+        primaryAction: "立即咨询",
+        eyebrow: "清晰结构 / 易于编辑 / 适合展示",
+        quickPoints: ["模块清晰", "重点突出", "便于继续编辑"],
+        metricTitle: "内容结构已搭好",
+        metricBody: "首屏、核心卖点、信任背书和转化动作都保持在正常文档流中，更适合可视化编辑。",
+        sideCards: [
+          { title: "核心卖点", body: "把最重要的价值放在首屏附近，用户一眼能看懂。" },
+          { title: "信息分层", body: "标题、说明、按钮和卡片层次清楚，不依赖复杂定位。" },
+          { title: "继续编辑", body: "后续可以直接在画布中修改文案、样式和区块顺序。" },
+          { title: "更稳布局", body: "Flex 和 Grid 负责排版，不再依赖漂浮或叠放。 " },
         ],
-      ),
-    ],
-  );
-}
-
-function createFAQItem(
-  question: string,
-  answer: string,
-  primaryColor: string,
-): EditorNode {
-  return createNode(
-    "container",
-    { layout: "flow" },
-    {
-      padding: "24px",
-      backgroundColor: "#ffffff",
-      borderRadius: "12px",
-      marginBottom: "16px",
-    },
-    [
-      createNode(
-        "title",
-        { content: question, level: "h4" },
-        {
-          fontSize: "18px",
-          fontWeight: "600",
-          color: primaryColor,
-          marginBottom: "12px",
-        },
-      ),
-      createNode(
-        "paragraph",
-        { content: answer },
-        {
-          fontSize: "15px",
-          color: "#666666",
-          lineHeight: "1.6",
-        },
-      ),
-    ],
-  );
-}
-
-function createTeamSection(primaryColor: string): EditorNode {
-  return createNode(
-    "container",
-    { layout: "flow" },
-    {
-      width: "100%",
-      padding: "100px 40px",
-      backgroundColor: "#ffffff",
-    },
-    [
-      createNode(
-        "title",
-        { content: "我们的团队", level: "h2" },
-        {
-          fontSize: "40px",
-          fontWeight: "700",
-          color: "#1a1a1a",
-          textAlign: "center",
-          marginBottom: "20px",
-        },
-      ),
-      createNode(
-        "paragraph",
-        { content: "专业、热情、创新的团队" },
-        {
-          fontSize: "18px",
-          color: "#666666",
-          textAlign: "center",
-          marginBottom: "60px",
-        },
-      ),
-      createNode(
-        "container",
-        { layout: "flow" },
-        {
-          display: "flex",
-          gap: "32px",
-          justifyContent: "center",
-          flexWrap: "wrap",
-        },
-        [
-          createTeamMember("张三", "创始人 & CEO", "👨‍💼", primaryColor),
-          createTeamMember("李四", "技术总监", "👨‍💻", primaryColor),
-          createTeamMember("王五", "设计总监", "👩‍🎨", primaryColor),
-          createTeamMember("赵六", "产品经理", "👨‍💼", primaryColor),
+        featureSectionTitle: "核心内容模块",
+        featureCards: [
+          { eyebrow: "01", title: featureTitles[0] || "核心价值", body: "把最需要用户记住的信息放在卡片里，内容短、重点清晰。"},
+          { eyebrow: "02", title: featureTitles[1] || "服务能力", body: "展示方案亮点、流程优势或产品价值，方便继续扩写。"},
+          { eyebrow: "03", title: featureTitles[2] || "信任背书", body: "补充案例、评价、数据或团队信息，增强说服力。"},
+          { eyebrow: "04", title: featureTitles[3] || "行动引导", body: "用明确按钮或联系入口承接转化，减少页面理解成本。"},
         ],
-      ),
-    ],
-  );
-}
+        proofTitle: pageType === "contact" ? "联系与沟通方式" : "补充说明与信任展示",
+        proofCards:
+          pageType === "contact"
+            ? [
+                { title: "快速联系", body: "可以在这里放电话、邮箱、微信或表单入口，减少沟通路径。" },
+                { title: "服务时间", body: "明确响应时间和服务范围，让用户知道下一步如何推进。" },
+                { title: "沟通价值", body: "强调咨询后能获得什么，提升点击和提交意愿。" },
+              ]
+            : [
+                { title: "案例展示", body: "用简短摘要说明代表性成果，让页面更有真实感。" },
+                { title: "用户评价", body: "通过评价或数据建立信任，不需要复杂布局也能成立。" },
+                { title: "后续行动", body: "在这一屏继续承接咨询、预约、试用或了解更多。" },
+              ],
+        ctaTitle: "把下一步动作说清楚",
+        ctaBody: "用一个明确按钮承接咨询、预约、试用或注册，让页面不仅能看，还能转化。",
+        ctaAction: "立即咨询",
+      }
+    : {
+        brand: "Brand Space",
+        navLinks: ["Home", "Solutions", "Cases", "About"],
+        secondaryAction: "Learn more",
+        primaryAction: "Get started",
+        eyebrow: "Clear structure / Easy editing / Better conversion",
+        quickPoints: ["Clear modules", "Strong hierarchy", "Easy follow-up edits"],
+        metricTitle: "A stable page foundation",
+        metricBody: "Hero, value blocks, trust signals, and CTA stay in normal flow and remain easy to edit.",
+        sideCards: [
+          { title: "Value first", body: "Lead with the clearest promise and keep it visible above the fold." },
+          { title: "Readable hierarchy", body: "Titles, descriptions, buttons, and cards are separated cleanly." },
+          { title: "Editable layout", body: "The page remains easy to refine in the visual editor afterward." },
+          { title: "Stable rendering", body: "Layout uses flex and grid instead of risky overlapping positioning." },
+        ],
+        featureSectionTitle: "Core content blocks",
+        featureCards: [
+          { eyebrow: "01", title: featureTitles[0] || "Core value", body: "Summarize the main message in a concise, scannable card." },
+          { eyebrow: "02", title: featureTitles[1] || "Service strength", body: "Show the most convincing capability or product advantage." },
+          { eyebrow: "03", title: featureTitles[2] || "Trust signal", body: "Add proof points such as cases, reviews, or numbers." },
+          { eyebrow: "04", title: featureTitles[3] || "Action path", body: "Make the next step obvious with a clear CTA." },
+        ],
+        proofTitle: pageType === "contact" ? "Ways to connect" : "Extra proof and context",
+        proofCards:
+          pageType === "contact"
+            ? [
+                { title: "Fast contact", body: "Place phone, email, or form entry points here." },
+                { title: "Service window", body: "Clarify response time and support scope." },
+                { title: "Why reach out", body: "Explain what the visitor gets after contacting you." },
+              ]
+            : [
+                { title: "Featured cases", body: "Use concise outcomes or examples to build trust." },
+                { title: "Client feedback", body: "Short testimonials or numbers make the page more convincing." },
+                { title: "Next step", body: "Use this section to lead into trial, booking, or contact." },
+              ],
+        ctaTitle: "Make the next action obvious",
+        ctaBody: "Use one clear button to guide visitors toward contact, signup, booking, or trial.",
+        ctaAction: "Get started",
+      };
 
-function createTeamMember(
-  name: string,
-  role: string,
-  avatar: string,
-  primaryColor: string,
-): EditorNode {
-  return createNode(
-    "container",
-    { layout: "flow" },
-    {
-      width: "260px",
-      padding: "40px 24px",
-      textAlign: "center",
-      backgroundColor: "#f8f9fa",
-      borderRadius: "16px",
-    },
-    [
-      createNode(
-        "title",
-        { content: avatar, level: "h2" },
-        {
-          fontSize: "64px",
-          marginBottom: "20px",
-        },
-      ),
-      createNode(
-        "title",
-        { content: name, level: "h3" },
-        {
-          fontSize: "20px",
-          fontWeight: "600",
-          color: "#1a1a1a",
-          marginBottom: "8px",
-        },
-      ),
-      createNode(
-        "paragraph",
-        { content: role },
-        {
-          fontSize: "14px",
-          color: primaryColor,
-          fontWeight: "500",
-        },
-      ),
-    ],
-  );
-}
-
-const sectionBuilders: Record<
-  string,
-  (primaryColor: string, backgroundColor?: string) => EditorNode
-> = {
-  hero: (primaryColor, backgroundColor) =>
-    createHeroSection(
-      "欢迎来到我们的网站",
-      "我们提供专业的解决方案，帮助您实现业务目标",
+  const sections: EditorNode[] = [
+    createNavigationSection(
+      copy.brand,
+      {
+        links: copy.navLinks,
+        secondaryAction: copy.secondaryAction,
+        primaryAction: copy.primaryAction,
+      },
       primaryColor,
+    ),
+    createHeroShowcaseSection(
+      mainTitle,
+      subtitle,
+      {
+        eyebrow: copy.eyebrow,
+        primaryAction: copy.primaryAction,
+        secondaryAction: copy.secondaryAction,
+        quickPoints: copy.quickPoints,
+        metricTitle: copy.metricTitle,
+        metricBody: copy.metricBody,
+        sideCards: copy.sideCards,
+      },
+      primaryColor,
+      secondaryColor,
       backgroundColor,
     ),
-  features: (primaryColor) =>
-    createFeaturesSection(primaryColor, [
-      { title: "专业团队", description: "拥有经验丰富的专业团队", icon: "🎯" },
-      { title: "优质服务", description: "提供卓越的客户服务", icon: "⭐" },
-      { title: "创新方案", description: "持续创新的解决方案", icon: "💡" },
-    ]),
-  about: createAboutSection,
-  services: createServicesSection,
-  contact: createContactSection,
-  cta: createCTASection,
-  testimonials: createTestimonialsSection,
-  gallery: createGallerySection,
-  faq: createFAQSection,
-  team: createTeamSection,
-};
+    createEnhancedFeatureSection(copy.featureSectionTitle, copy.featureCards, primaryColor),
+  ];
 
-const pageTemplates: Record<
-  string,
-  (
-    primaryColor: string,
-    backgroundColor: string,
-    sections?: string[],
-  ) => EditorNode[]
-> = {
-  home: (primaryColor, backgroundColor, sections) => {
-    const defaultSections = ["hero", "features", "about", "cta"];
-    const selectedSections =
-      sections && sections.length > 0 ? sections : defaultSections;
-    return selectedSections
-      .filter((s) => sectionBuilders[s])
-      .map((s) => sectionBuilders[s](primaryColor, backgroundColor));
-  },
-  product: (primaryColor, backgroundColor, sections) => {
-    const defaultSections = [
-      "hero",
-      "features",
-      "services",
-      "testimonials",
-      "cta",
-    ];
-    const selectedSections =
-      sections && sections.length > 0 ? sections : defaultSections;
-    return selectedSections
-      .filter((s) => sectionBuilders[s])
-      .map((s) => sectionBuilders[s](primaryColor, backgroundColor));
-  },
-  contact: (primaryColor, backgroundColor, sections) => {
-    const defaultSections = ["hero", "contact", "faq"];
-    const selectedSections =
-      sections && sections.length > 0 ? sections : defaultSections;
-    return selectedSections
-      .filter((s) => sectionBuilders[s])
-      .map((s) => sectionBuilders[s](primaryColor, backgroundColor));
-  },
-  landing: (primaryColor, backgroundColor, sections) => {
-    const defaultSections = ["hero", "features", "testimonials", "cta"];
-    const selectedSections =
-      sections && sections.length > 0 ? sections : defaultSections;
-    return selectedSections
-      .filter((s) => sectionBuilders[s])
-      .map((s) => sectionBuilders[s](primaryColor, backgroundColor));
-  },
-  portfolio: (primaryColor, backgroundColor, sections) => {
-    const defaultSections = ["hero", "gallery", "testimonials", "cta"];
-    const selectedSections =
-      sections && sections.length > 0 ? sections : defaultSections;
-    return selectedSections
-      .filter((s) => sectionBuilders[s])
-      .map((s) => sectionBuilders[s](primaryColor, backgroundColor));
-  },
-  business: (primaryColor, backgroundColor, sections) => {
-    const defaultSections = [
-      "hero",
-      "about",
-      "services",
-      "team",
-      "contact",
-      "cta",
-    ];
-    const selectedSections =
-      sections && sections.length > 0 ? sections : defaultSections;
-    return selectedSections
-      .filter((s) => sectionBuilders[s])
-      .map((s) => sectionBuilders[s](primaryColor, backgroundColor));
-  },
-};
+  sections.push(createSocialProofSection(copy.proofTitle, copy.proofCards));
 
-function inferPageTypeFromInstruction(instruction: string): string {
-  const lower = instruction.trim().toLowerCase();
-  if (
-    /产品|商品|介绍|功能|特性|价格|购买/.test(lower) &&
-    !/联系|留言|反馈|联系我们/.test(lower)
-  ) {
-    return "product";
-  }
-  if (/联系|留言|反馈|表单|邮箱|电话|联系我们/.test(lower)) {
-    return "contact";
-  }
-  if (/作品集|案例|展示|作品/.test(lower)) {
-    return "portfolio";
-  }
-  if (/企业|公司|商业|业务/.test(lower)) {
-    return "business";
-  }
-  if (/落地页|营销|推广/.test(lower)) {
-    return "landing";
-  }
-  return "home";
-}
+  sections.push(
+    createCtaSection(
+      primaryColor,
+      copy.ctaTitle,
+      copy.ctaBody,
+      copy.ctaAction,
+    ),
+  );
+
+  return sections;
+};
 
 const adjustNodesByLength = (
   input: AIPageGenerateRequest,
   nodes: EditorNode[],
 ): EditorNode[] => {
   const length = input.length ?? "medium";
+  const target =
+    length === "short"
+      ? { min: 2, max: 3 }
+      : length === "long"
+        ? { min: 5, max: 7 }
+        : { min: 3, max: 5 };
 
-  const cloneNodes = (items: EditorNode[]): EditorNode[] =>
-    items.map((node) => ({
-      ...node,
-      id: createNodeId(),
-      children: cloneNodes(node.children ?? []),
-    }));
-
-  const base = nodes.length === 0 ? [] : nodes;
-  if (base.length === 0) {
-    return base;
+  const result = nodes.map((node) => cloneNodeWithFreshIds(node));
+  while (result.length < target.min && result.length > 0) {
+    result.push(cloneNodeWithFreshIds(result[result.length - 1]));
   }
 
-  const ensureRange = (min: number, max: number): EditorNode[] => {
-    const result: EditorNode[] = [];
-    base.forEach((node) => {
-      result.push(node);
-    });
-    while (result.length < min) {
-      const last = result[result.length - 1] ?? base[base.length - 1];
-      result.push(...cloneNodes([last]));
-    }
-    if (result.length > max) {
-      return result.slice(0, max);
-    }
-    return result;
-  };
-
-  if (length === "short") {
-    return ensureRange(2, 3);
-  }
-  if (length === "long") {
-    return ensureRange(5, 7);
-  }
-  return ensureRange(3, 5);
+  return result.slice(0, target.max);
 };
-
-function extractContentFromInstruction(instruction: string): {
-  heroTitle: string;
-  heroSubtitle: string;
-  pageTitle: string;
-} {
-  const trimmed = instruction.trim();
-  let heroTitle = "欢迎来到我们的网站";
-  let heroSubtitle = "我们提供专业的解决方案，帮助您实现业务目标";
-  let pageTitle = trimmed || "Web Page";
-
-  if (trimmed) {
-    const shortTitle =
-      trimmed.length > 30 ? trimmed.slice(0, 30) + "…" : trimmed;
-    pageTitle = shortTitle;
-
-    if (trimmed.includes("设计") || trimmed.includes("工作室")) {
-      heroTitle = trimmed.includes("工作室")
-        ? "创意设计工作室"
-        : "专业设计服务";
-      heroSubtitle = "打造独特的视觉体验，让您的品牌脱颖而出";
-    } else if (trimmed.includes("科技") || trimmed.includes("公司")) {
-      heroTitle = "创新科技公司";
-      heroSubtitle = "用技术驱动创新，为您的业务赋能";
-    } else if (trimmed.includes("电商") || trimmed.includes("购物")) {
-      heroTitle = "优质电商平台";
-      heroSubtitle = "精选好物，品质生活，尽在掌握";
-    } else if (trimmed.includes("教育") || trimmed.includes("培训")) {
-      heroTitle = "专业教育平台";
-      heroSubtitle = "终身学习，持续成长，开启无限可能";
-    } else if (trimmed.includes("医疗") || trimmed.includes("健康")) {
-      heroTitle = "专业医疗健康";
-      heroSubtitle = "守护健康，关爱生命，我们与您同行";
-    } else if (trimmed.includes("餐厅") || trimmed.includes("美食")) {
-      heroTitle = "特色美食餐厅";
-      heroSubtitle = "用心烹制每一道美味，满足您的味蕾";
-    } else if (trimmed.includes("咖啡") || trimmed.includes("咖啡馆")) {
-      heroTitle = "温馨咖啡馆";
-      heroSubtitle = "一杯咖啡，一段时光，享受慢生活";
-    } else if (trimmed.includes("健身") || trimmed.includes("运动")) {
-      heroTitle = "专业健身中心";
-      heroSubtitle = "释放激情，挥洒汗水，塑造更好的自己";
-    } else if (trimmed.includes("摄影") || trimmed.includes("照片")) {
-      heroTitle = "专业摄影服务";
-      heroSubtitle = "捕捉精彩瞬间，记录美好回忆";
-    } else if (trimmed.includes("旅行") || trimmed.includes("旅游")) {
-      heroTitle = "精彩旅行体验";
-      heroSubtitle = "探索世界，发现美好，开启您的旅程";
-    } else {
-      heroTitle = trimmed.length > 20 ? trimmed.slice(0, 20) + "…" : trimmed;
-      heroSubtitle = trimmed.length > 50 ? trimmed.slice(0, 50) + "…" : trimmed;
-    }
-  }
-
-  return { heroTitle, heroSubtitle, pageTitle };
-}
 
 const buildFallbackResponse = (
   input: AIPageGenerateRequest,
-  pageType: string,
 ): AIPageGenerateResponse => {
+  const sections = adjustNodesByLength(input, buildFallbackSections(input));
+  const title =
+    compactText(
+      buildInstructionHighlights(input.instruction, 1, 48)[0] ?? input.instruction,
+      48,
+    ) || "Generated page";
   const primaryColor = input.primaryColor || "#3366ff";
-  const secondaryColor = input.secondaryColor || "#666666";
-  const backgroundColor = input.backgroundColor || "#ffffff";
 
-  const { heroTitle, heroSubtitle, pageTitle } = extractContentFromInstruction(
-    input.instruction,
-  );
-
-  let templateNodesRaw: EditorNode[];
-
-  if (pageTemplates[pageType]) {
-    templateNodesRaw = pageTemplates[pageType](
-      primaryColor,
-      backgroundColor,
-      input.sections,
-    );
-
-    const heroSection = templateNodesRaw.find((node) => {
-      const firstChild = node.children?.[0];
-      return firstChild?.type === "title" && firstChild.props?.level === "h1";
-    });
-
-    if (heroSection) {
-      const heroIndex = templateNodesRaw.indexOf(heroSection);
-      const updatedHero = createHeroSection(
-        heroTitle,
-        heroSubtitle,
-        primaryColor,
-        backgroundColor,
-      );
-      templateNodesRaw[heroIndex] = updatedHero;
-    }
-  } else {
-    templateNodesRaw = pageTemplates["home"](
-      primaryColor,
-      backgroundColor,
-      input.sections,
-    );
-
-    const updatedHero = createHeroSection(
-      heroTitle,
-      heroSubtitle,
-      primaryColor,
-      backgroundColor,
-    );
-    templateNodesRaw[0] = updatedHero;
-  }
-
-  const templateNodes = adjustNodesByLength(input, templateNodesRaw);
-
-  return {
-    document: {
-      id: input.pageId,
-      projectId: input.projectId,
-      title: pageTitle,
-      status: "draft",
-      version: 1,
-      updatedAt: new Date().toISOString(),
-      root: templateNodes,
-      meta: {
-        source: "ai-page-template",
-        pageStyle: {
-          backgroundColor,
-          fontFamily:
-            "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-        },
+  const document = normalizeAIPageDocument({
+    id: input.pageId,
+    projectId: input.projectId,
+    title,
+    status: "draft",
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    root: sections,
+    meta: {
+      source: "ai-page-template",
+      pageStyle: {
+        backgroundColor: input.backgroundColor || "#ffffff",
+        fontFamily: FONT_STACK,
       },
     },
-    reasoningSummary: `已根据「${input.instruction.slice(0, 50)}${input.instruction.length > 50 ? "…" : ""}」使用${pageType}模板生成页面，主色：${primaryColor}。（温馨提示：配置 API key 可获得更智能的生成效果）`,
+  });
+
+  return {
+    document,
+    reasoningSummary: `Generated a fallback ${inferPageTypeFromInstruction(input.instruction)} page using the requested primary color ${primaryColor}.`,
     safetyFlags: [],
   };
 };
 
-const fallbackPage = (input: AIPageGenerateRequest): AIPageGenerateResponse => {
-  const pageType =
-    input.pageType && pageTemplates[input.pageType]
-      ? input.pageType
-      : inferPageTypeFromInstruction(input.instruction);
-  return buildFallbackResponse(input, pageType);
-};
+const fallbackPage = (input: AIPageGenerateRequest): AIPageGenerateResponse =>
+  buildFallbackResponse(input);
+
+const wrapTopLevelNodeInContainer = (node: EditorNode): EditorNode =>
+  createNode(
+    "container",
+    { layout: "flow" },
+    {
+      width: "100%",
+      padding: "32px 24px",
+    },
+    [node],
+  );
+
+const normalizeTopLevelNodes = (nodes: EditorNode[]): EditorNode[] =>
+  nodes.map((node) =>
+    node.type === "container" ? node : wrapTopLevelNodeInContainer(node),
+  );
 
 const parseAIPageResponse = (
   raw: unknown,
   input: AIPageGenerateRequest,
 ): AIPageGenerateResponse => {
-  console.log("Parsing AI response:", raw);
-
   const parsed = AIPageModelOutputSchema.safeParse(raw);
   if (!parsed.success) {
-    console.error("Schema validation failed:", parsed.error);
-    throw new Error("AI response format is invalid: " + parsed.error.message);
+    throw new Error("AI response format is invalid");
   }
 
   const result = parsed.data;
   const nodesRaw =
     result.nodes
       ?.map((item: unknown) => normalizeNode(item))
-      .filter((item: EditorNode | null): item is EditorNode => Boolean(item)) ??
-    [];
+      .filter((item): item is EditorNode => Boolean(item)) ?? [];
 
-  console.log("Normalized nodes count:", nodesRaw.length);
-
-  if (nodesRaw.length < 2) {
+  const normalizedNodes = normalizeTopLevelNodes(nodesRaw);
+  if (normalizedNodes.length < 2) {
     throw new Error("AI generated too few nodes");
   }
 
-  const nodes = adjustNodesByLength(input, nodesRaw);
-
+  const nodes = sanitizeGeneratedNodeCopy(adjustNodesByLength(input, normalizedNodes));
   const title =
-    String(result.title ?? "").trim() || input.instruction.trim() || "Web Page";
+    String(result.title ?? "").trim() || compactText(input.instruction, 48) || "Web Page";
 
-  return {
-    document: {
-      id: input.pageId,
-      projectId: input.projectId,
-      title,
-      status: "draft",
-      version: 1,
-      updatedAt: new Date().toISOString(),
-      root: nodes,
-      meta: {
-        source: "ai-page-generate",
-        pageStyle: {
-          ...(isObject(result.pageStyle) ? result.pageStyle : {}),
-          fontFamily:
-            "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-        },
+  if (isLowQualityAIPage(title, nodes, input.instruction)) {
+    throw new Error("AI generated placeholder-heavy content");
+  }
+
+  const document = normalizeAIPageDocument({
+    id: input.pageId,
+    projectId: input.projectId,
+    title,
+    status: "draft",
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    root: nodes,
+    meta: {
+      source: "ai-page-generate",
+      pageStyle: {
+        ...(isObject(result.pageStyle) ? result.pageStyle : {}),
+        fontFamily: FONT_STACK,
       },
     },
+  });
+
+  return {
+    document,
     reasoningSummary:
       String(result.reasoningSummary ?? "").trim() ||
-      "已根据您的描述生成网页，您可以在画布上继续编辑。",
+      "Generated a page based on your request. You can continue editing on the canvas.",
     safetyFlags: Array.isArray(result.safetyFlags) ? result.safetyFlags : [],
   };
 };
 
-const SYSTEM_PROMPT = `你是一个网页生成器，只返回JSON。
 
-返回格式：
-{"title":"页面标题","nodes":[{"type":"container","props":{"layout":"flow"},"style":{"width":"100%","padding":"100px 40px","backgroundColor":"#f8f9fa"},"children":[{"type":"title","props":{"content":"大标题","level":"h1"},"style":{"fontSize":"52px","fontWeight":"700"},"children":[]},{"type":"paragraph","props":{"content":"介绍文字"},"style":{"fontSize":"18px"},"children":[]},{"type":"button","props":{"label":"按钮","variant":"primary"},"style":{"padding":"16px 40px","backgroundColor":"#3366ff","color":"#fff"},"children":[]}]}],"pageStyle":{"backgroundColor":"#ffffff","fontFamily":"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"},"reasoningSummary":"已生成","safetyFlags":[]}
+const MAX_PAGE_PROMPT_CHARS = 1800;
+const MAX_NODE_PROMPT_CHARS = 1200;
+const MAX_CHAT_MESSAGES = 6;
+const MAX_CHAT_MESSAGE_CHARS = 320;
+const MAX_KEYWORDS = 6;
+const MAX_SECTIONS = 6;
 
-节点类型：container, title, paragraph, button
-要求：至少3个container，内容贴合用户描述
-只返回JSON，不要其他文字`;
+const PROMPT_PROP_KEYS = [
+  "content",
+  "label",
+  "href",
+  "placeholder",
+  "alt",
+  "items",
+  "layout",
+  "icon",
+  "level",
+  "variant",
+  "type",
+  "rows",
+  "cols",
+] as const;
 
-const NODE_EXAMPLE = `示例（仅作格式参考）：
-{"title":"示例页","nodes":[{"type":"container","props":{"layout":"flow"},"style":{"width":"100%","padding":"100px 40px","backgroundColor":"#f8f9fa","textAlign":"center","display":"flex","flexDirection":"column","justifyContent":"center","alignItems":"center"},"children":[{"type":"title","props":{"content":"欢迎","level":"h1"},"style":{"fontSize":"52px","fontWeight":"700","color":"#1a1a1a","marginBottom":"24px","lineHeight":"1.2"},"children":[]},{"type":"paragraph","props":{"content":"这是一段介绍文字，说明我们的价值主张。"},"style":{"fontSize":"20px","color":"#666666","lineHeight":"1.7","maxWidth":"700px","margin":"0 auto 40px"},"children":[]},{"type":"container","props":{"layout":"flow"},"style":{"display":"flex","gap":"20px","justifyContent":"center","flexWrap":"wrap"},"children":[{"type":"button","props":{"label":"立即开始","variant":"primary"},"style":{"padding":"16px 40px","backgroundColor":"#3366ff","color":"#ffffff","borderRadius":"10px","fontSize":"18px","fontWeight":"600","cursor":"pointer"},"children":[]}]}]}],"pageStyle":{"backgroundColor":"#ffffff","fontFamily":"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"},"reasoningSummary":"生成了包含Hero区块的首页。","safetyFlags":[]}`;
+const PROMPT_STYLE_KEYS = [
+  "width",
+  "height",
+  "maxWidth",
+  "minHeight",
+  "padding",
+  "margin",
+  "display",
+  "flexDirection",
+  "justifyContent",
+  "alignItems",
+  "gap",
+  "color",
+  "backgroundColor",
+  "fontSize",
+  "fontWeight",
+  "lineHeight",
+  "border",
+  "borderRadius",
+  "gridTemplateColumns",
+  "gridTemplateRows",
+] as const;
 
-function buildUserPrompt(input: AIPageGenerateRequest): string {
-  return [
-    "用户需求：",
-    input.instruction,
-    "",
-    "主色：" + (input.primaryColor ?? "#3366ff"),
-    "",
-    "只返回JSON，不要其他文字",
-  ].join("\n");
-}
+const SUPPORTED_AI_NODE_TYPES = [
+  "container",
+  "title",
+  "paragraph",
+  "text",
+  "button",
+  "image",
+  "link",
+  "list",
+  "input",
+  "table",
+  "nav",
+  "i",
+  "li",
+  "ul",
+  "ol",
+] as const;
 
-function buildUserPromptStrict(input: AIPageGenerateRequest): string {
-  const ctx = {
-    instruction: input.instruction,
-    primaryColor: input.primaryColor ?? "#3366ff",
-    language: input.language ?? "zh-CN",
+const collapseWhitespace = (value: string): string =>
+  value.replace(/\s+/g, " ").trim();
+
+const splitPromptSegments = (value: string): string[] =>
+  value
+    .split(/\r?\n|[\u3002\uFF01\uFF1F!?\uFF1B;]+/u)
+    .map((part) => collapseWhitespace(part))
+    .filter(Boolean);
+
+const compactText = (value: string, maxChars: number): string => {
+  const normalized = collapseWhitespace(value);
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxChars).trimEnd()}...`;
+};
+
+const INSTRUCTIONAL_COPY_PATTERN =
+  /^(?:生成|创建|设计|制作|搭建)|^(?:build|create|design|generate)\b|(?:整体风格|主色|辅助色|背景以|页面结构|正常文档流|文档流|禁止使用|顶层内容|宽度\s*100%|fixed|absolute|sticky|top|left|right|bottom|primary color|secondary color|background color|normal document flow|do not use)/iu;
+
+const normalizeContentToken = (value: string): string =>
+  collapseWhitespace(String(value ?? "")).toLowerCase();
+
+const isInstructionalCopy = (value: string): boolean =>
+  INSTRUCTIONAL_COPY_PATTERN.test(collapseWhitespace(value));
+
+const PLACEHOLDER_TEXT_TOKENS = new Set(
+  [
+    "标题文本",
+    "按钮",
+    "单行文本",
+    "导航栏",
+    "这是一段段落内容",
+    "超链接",
+    "图片",
+    "列表项",
+    "列表项 1",
+    "列表项 2",
+    "列表项 3",
+    "title",
+    "title text",
+    "button",
+    "text",
+    "navigation",
+    "paragraph",
+    "image",
+    "link",
+    "list item",
+  ].map((value) => normalizeContentToken(value)),
+);
+
+const flattenNodes = (nodes: EditorNode[]): EditorNode[] =>
+  nodes.flatMap((node) => [node, ...flattenNodes(node.children)]);
+
+const readPrimaryNodeCopy = (node: EditorNode): string => {
+  if (["title", "paragraph", "text", "nav", "li"].includes(node.type)) {
+    return String(node.props.content ?? "");
+  }
+  if (node.type === "button" || node.type === "link") {
+    return String(node.props.label ?? "");
+  }
+  if (node.type === "input") {
+    return String(node.props.placeholder ?? "");
+  }
+  if (node.type === "image") {
+    return String(node.props.alt ?? "");
+  }
+  if (node.type === "list" || node.type === "ul" || node.type === "ol") {
+    const items = Array.isArray(node.props.items) ? node.props.items : [];
+    return String(items[0] ?? "");
+  }
+  return "";
+};
+
+const isLowQualityAIPage = (
+  title: string,
+  nodes: EditorNode[],
+  instruction: string,
+): boolean => {
+  const allNodes = flattenNodes(nodes);
+  const textValues = [title, ...allNodes.map((node) => readPrimaryNodeCopy(node))]
+    .map((value) => collapseWhitespace(value))
+    .filter(Boolean);
+  const normalizedInstruction = normalizeContentToken(instruction);
+  const instructionSegments = Array.from(
+    new Set(
+      splitPromptSegments(instruction)
+        .map((value) => normalizeContentToken(value))
+        .filter((value) => value.length >= 10),
+    ),
+  );
+
+  if (textValues.length < 4) {
+    return true;
+  }
+
+  const placeholderCount = textValues.filter((value) =>
+    PLACEHOLDER_TEXT_TOKENS.has(normalizeContentToken(value)),
+  ).length;
+
+  if (placeholderCount / textValues.length >= 0.35) {
+    return true;
+  }
+
+  const instructionalCount = textValues.filter((value) => isInstructionalCopy(value)).length;
+  if (instructionalCount >= 2) {
+    return true;
+  }
+
+  const promptEchoCount = textValues.filter((value) => {
+    const normalized = normalizeContentToken(value);
+    if (normalized.length < 10) {
+      return false;
+    }
+    if (
+      instructionSegments.some(
+        (segment) => segment.includes(normalized) || normalized.includes(segment),
+      )
+    ) {
+      return true;
+    }
+    return (
+      normalizedInstruction.length >= 18 &&
+      normalizedInstruction.includes(normalized) &&
+      normalized.length >= Math.min(36, Math.floor(normalizedInstruction.length * 0.35))
+    );
+  }).length;
+
+  if (promptEchoCount >= 3 || promptEchoCount / textValues.length >= 0.3) {
+    return true;
+  }
+
+  const meaningfulTitleCount = allNodes.filter((node) => {
+    if (node.type !== "title") {
+      return false;
+    }
+    return !PLACEHOLDER_TEXT_TOKENS.has(normalizeContentToken(String(node.props.content ?? "")));
+  }).length;
+
+  return meaningfulTitleCount < 2;
+};
+
+const compactOptionalText = (
+  value: unknown,
+  maxChars: number,
+): string | undefined => {
+  const normalized = compactText(String(value ?? ""), maxChars);
+  return normalized || undefined;
+};
+
+const compactInstructionText = (
+  value: string,
+  maxChars: number,
+  maxSegments: number,
+): string => {
+  const normalized = collapseWhitespace(value);
+  if (!normalized) {
+    return "";
+  }
+
+  const segments = Array.from(new Set(splitPromptSegments(value)));
+  if (segments.length <= 1) {
+    return compactText(normalized, maxChars);
+  }
+
+  return compactText(segments.slice(0, maxSegments).join("; "), maxChars);
+};
+
+const sanitizeStringList = (
+  values: string[] | undefined,
+  maxItems: number,
+  maxChars: number,
+): string[] | undefined => {
+  if (!values || values.length === 0) {
+    return undefined;
+  }
+
+  const next = values
+    .map((value) => compactText(String(value ?? ""), maxChars))
+    .filter(Boolean)
+    .slice(0, maxItems);
+
+  return next.length > 0 ? next : undefined;
+};
+
+const clampGeneratedNodeCopy = (node: EditorNode): EditorNode => {
+  const next = cloneNode(node);
+
+  if (typeof next.props.content === "string") {
+    const maxChars =
+      next.type === "paragraph"
+        ? 220
+        : next.type === "title"
+          ? 56
+          : next.type === "nav"
+            ? 28
+            : 64;
+    next.props.content = compactText(next.props.content, maxChars);
+  }
+
+  if (typeof next.props.label === "string") {
+    const maxChars = next.type === "link" ? 22 : 18;
+    next.props.label = compactText(next.props.label, maxChars);
+  }
+
+  if (typeof next.props.placeholder === "string") {
+    next.props.placeholder = compactText(next.props.placeholder, 36);
+  }
+
+  if (typeof next.props.alt === "string") {
+    next.props.alt = compactText(next.props.alt, 48);
+  }
+
+  if (Array.isArray(next.props.items)) {
+    next.props.items = next.props.items
+      .map((item) => compactText(String(item ?? ""), 48))
+      .filter(Boolean)
+      .slice(0, 8);
+  }
+
+  next.children = next.children.map((child) => clampGeneratedNodeCopy(child));
+  return next;
+};
+
+const sanitizeGeneratedNodeCopy = (nodes: EditorNode[]): EditorNode[] =>
+  nodes.map((node) => clampGeneratedNodeCopy(node));
+
+const sanitizeConversation = (
+  values?: AIChatMessage[],
+): AIChatMessage[] | undefined => {
+  if (!values || values.length === 0) {
+    return undefined;
+  }
+
+  const next = values
+    .map((value) => ({
+      role: value.role,
+      content: compactText(value.content, MAX_CHAT_MESSAGE_CHARS),
+    }))
+    .filter((value) => value.content.length > 0)
+    .slice(-MAX_CHAT_MESSAGES);
+
+  return next.length > 0 ? next : undefined;
+};
+
+const sanitizePageInput = (
+  input: AIPageGenerateRequest,
+): AIPageGenerateRequest => ({
+  ...input,
+  instruction: compactInstructionText(input.instruction, MAX_PAGE_PROMPT_CHARS, 8),
+  pageType: compactOptionalText(input.pageType, 24),
+  style: compactOptionalText(input.style, 24),
+  primaryColor: compactOptionalText(input.primaryColor, 24),
+  secondaryColor: compactOptionalText(input.secondaryColor, 24),
+  backgroundColor: compactOptionalText(input.backgroundColor, 24),
+  tone: compactOptionalText(input.tone, 24),
+  length: compactOptionalText(input.length, 24),
+  language: compactOptionalText(input.language, 24),
+  complexity: compactOptionalText(input.complexity, 24),
+  layout: compactOptionalText(input.layout, 24),
+  contentFocus: compactOptionalText(input.contentFocus, 32),
+  audience: compactOptionalText(input.audience, 32),
+  industry: compactOptionalText(input.industry, 32),
+  keywords: sanitizeStringList(input.keywords, MAX_KEYWORDS, 24),
+  sections: sanitizeStringList(input.sections, MAX_SECTIONS, 24),
+});
+
+const sanitizeNodeInput = (
+  input: AINodeModifyProviderInput,
+): AINodeModifyProviderInput => ({
+  ...input,
+  instruction: compactInstructionText(input.instruction, MAX_NODE_PROMPT_CHARS, 6),
+  pageTitle: compactText(input.pageTitle, 80) || "Untitled Page",
+  language: compactOptionalText(input.language, 24),
+  conversation: sanitizeConversation(input.conversation),
+  targetNode: cloneNode(input.targetNode),
+});
+
+const resolvePromptLanguage = (
+  language: string | undefined,
+  fallbackText: string,
+): string => {
+  const normalized = compactOptionalText(language, 24);
+  if (normalized) {
+    return normalized;
+  }
+  return /[\u4e00-\u9fff]/u.test(fallbackText) ? "zh-CN" : "en";
+};
+
+const resolveSectionTarget = (value?: string): string => {
+  switch (String(value ?? "").trim().toLowerCase()) {
+    case "short":
+      return "2-3";
+    case "long":
+      return "5-7";
+    default:
+      return "3-5";
+  }
+};
+
+const resolveComplexityHint = (value?: string): string => {
+  switch (String(value ?? "").trim().toLowerCase()) {
+    case "simple":
+    case "low":
+      return "Keep the structure simple and easy to edit.";
+    case "complex":
+    case "high":
+      return "You may add hierarchy, but avoid deep nesting.";
+    default:
+      return "Use medium complexity and keep the structure easy to edit.";
+  }
+};
+
+const resolveCopyHint = (value?: string): string => {
+  switch (String(value ?? "").trim().toLowerCase()) {
+    case "short":
+      return "Keep each section concise, with short copy only.";
+    case "long":
+      return "You may add more complete sections, but keep each paragraph concise.";
+    default:
+      return "Use concise copy and avoid long paragraphs.";
+  }
+};
+
+const buildInstructionHighlights = (
+  instruction: string,
+  maxItems = 6,
+  maxChars = 72,
+): string[] =>
+  splitPromptSegments(instruction)
+    .map((value) => compactText(value, maxChars))
+    .filter(Boolean)
+    .slice(0, maxItems);
+
+const buildPageRequirementList = (
+  input: AIPageGenerateRequest,
+  language: string,
+): string[] => {
+  const requirements = [
+    input.pageType ? `pageType: ${input.pageType}` : undefined,
+    input.style ? `style: ${input.style}` : undefined,
+    input.tone ? `tone: ${input.tone}` : undefined,
+    input.layout ? `layout: ${input.layout}` : undefined,
+    input.contentFocus ? `contentFocus: ${input.contentFocus}` : undefined,
+    input.audience ? `audience: ${input.audience}` : undefined,
+    input.industry ? `industry: ${input.industry}` : undefined,
+    `language: ${language}`,
+    `targetSections: ${resolveSectionTarget(input.length)}`,
+    resolveComplexityHint(input.complexity),
+    resolveCopyHint(input.length),
+  ];
+
+  return requirements.filter((item): item is string => Boolean(item));
+};
+
+const buildPagePromptPayload = (input: AIPageGenerateRequest) => {
+  const language = resolvePromptLanguage(input.language, input.instruction);
+  return {
+    instructionSummary: compactText(input.instruction, 260),
+    instructionHighlights: buildInstructionHighlights(input.instruction).filter(
+      (item) => !isInstructionalCopy(item),
+    ),
+    explicitRequirements: buildPageRequirementList(input, language),
+    preferredSections: input.sections ?? [],
+    keywords: input.keywords ?? [],
+    colorHints: {
+      primaryColor: input.primaryColor ?? "#3366ff",
+      secondaryColor: input.secondaryColor,
+      backgroundColor: input.backgroundColor,
+    },
+    outputRules: {
+      language,
+      topLevelNodeType: "container",
+      allowedNodeTypes: SUPPORTED_AI_NODE_TYPES,
+      allowedButtonVariants: ["primary", "outline", "soft"],
+      targetSectionCount: resolveSectionTarget(input.length),
+      minimumTopLevelSections: 2,
+      forbiddenLayoutRules: [
+        "Do not use fixed, absolute, or sticky positioning for page sections.",
+        "Do not place nodes outside their parent section.",
+        "Do not leave key text props empty or generic.",
+      ],
+      textRule:
+        "Keep copy concise, specific, editable, and free of HTML strings, explanatory prefaces, or prompt-echoed requirement text.",
+    },
   };
+};
+
+const buildPagePrompt = (input: AIPageGenerateRequest): string => {
+  const safeInput = sanitizePageInput(input);
   return [
-    "只输出一个JSON对象，不要任何前后文字。",
-    "必须包含: title, nodes, pageStyle, reasoningSummary, safetyFlags。",
-    "nodes中每项要有type, props, style, children。",
-    "确保nodes数组至少有3个container区块。",
-    "用户需求：",
-    JSON.stringify(ctx, null, 2),
+    "Task: generate a page draft for a visual editor.",
+    "Return exactly one valid JSON object. No markdown, code fences, commentary, or extra text.",
+    "If the request is long, repetitive, or conflicting, compress it internally and keep only the clearest high-priority requirements.",
+    "Required keys: title, nodes, pageStyle, reasoningSummary, safetyFlags.",
+    "Top-level nodes must be containers only. Every node must include type, props, style, children.",
+    `Allowed node types: ${SUPPORTED_AI_NODE_TYPES.join(", ")}.`,
+    "Allowed button variants: primary, outline, soft.",
+    "Never output placeholder copy such as 标题文本, 单行文本, 按钮, 导航栏, 这是一段段落内容, or generic empty props.",
+    "Avoid empty image placeholders. If you cannot justify an image, use a content container instead.",
+    "Never reuse the user's request sentence, style rules, or layout constraints as visible page headings, card titles, or body copy.",
+    "Use normal document flow only. Never use fixed, absolute, sticky, top, left, right, or bottom for page-section layout.",
+    "For homepage-like requests, include a real navigation area, a hero section, content cards, and a clear final CTA.",
+    "The page must be renderable immediately. Keep copy concise and avoid lorem ipsum.",
+    JSON.stringify(buildPagePromptPayload(safeInput), null, 2),
   ].join("\n");
-}
+};
+
+const buildPagePromptStrict = (input: AIPageGenerateRequest): string => {
+  const safeInput = sanitizePageInput(input);
+  const language = resolvePromptLanguage(safeInput.language, safeInput.instruction);
+  return [
+    "Strict JSON mode.",
+    "Return one JSON object only. No commentary, markdown, or code fences.",
+    "If all requirements cannot be satisfied together, prioritize valid JSON, renderable nodes, and container-only top-level sections.",
+    "Do not use placeholder copy. Do not use fixed or absolute page-section positioning. Do not echo the prompt itself as visible copy.",
+    JSON.stringify(
+      {
+        instructionSummary: safeInput.instruction,
+        instructionHighlights: buildInstructionHighlights(safeInput.instruction, 4, 64),
+        outputRules: {
+          language,
+          targetSectionCount: resolveSectionTarget(safeInput.length),
+          primaryColor: safeInput.primaryColor ?? "#3366ff",
+          minimumTopLevelSections: 2,
+          topLevelNodeType: "container",
+        },
+      },
+      null,
+      2,
+    ),
+  ].join("\n");
+};
+
+const pickPromptProps = (node: EditorNode): Record<string, unknown> => {
+  const next: Record<string, unknown> = {};
+  PROMPT_PROP_KEYS.forEach((key) => {
+    if (key in node.props) {
+      next[key] = node.props[key];
+    }
+  });
+  return next;
+};
+
+const pickPromptStyle = (
+  node: EditorNode,
+): Record<string, string | number | boolean | null> => {
+  const next: Record<string, string | number | boolean | null> = {};
+  PROMPT_STYLE_KEYS.forEach((key) => {
+    if (key in node.style) {
+      next[key] = node.style[key];
+    }
+  });
+  return next;
+};
+
+const summarizeNodeForPrompt = (
+  node: EditorNode,
+  depth = 0,
+): Record<string, unknown> => ({
+  type: node.type,
+  props: pickPromptProps(node),
+  style: pickPromptStyle(node),
+  children:
+    depth >= 1
+      ? node.children.length
+      : node.children
+          .slice(0, 3)
+          .map((child) => summarizeNodeForPrompt(child, depth + 1)),
+});
+
+const buildNodePromptPayload = (input: AINodeModifyProviderInput) => {
+  const language = resolvePromptLanguage(input.language, input.instruction);
+  return {
+    latestInstruction: input.instruction,
+    instructionHighlights: buildInstructionHighlights(input.instruction, 4, 64),
+    conversation: input.conversation ?? [],
+    targetNode: summarizeNodeForPrompt(input.targetNode),
+    outputRules: {
+      language,
+      keepNodeType: input.targetNode.type,
+      preserveId: input.targetNode.id,
+      scope: "Modify the selected node only. Do not regenerate the whole page.",
+      preserveRule:
+        "Preserve the current structure, links, and major sizing unless the user explicitly asks to change them.",
+    },
+    pageContext: {
+      pageTitle: input.pageTitle,
+    },
+  };
+};
+
+const buildNodePrompt = (input: AINodeModifyProviderInput): string => {
+  const safeInput = sanitizeNodeInput(input);
+  return [
+    "Task: modify the selected node only.",
+    "Return exactly one valid JSON object. No markdown, commentary, or code fences.",
+    "Required keys: node, reasoningSummary, safetyFlags.",
+    "node.type must match targetNode.type exactly.",
+    "If the conversation is long, prioritize latestInstruction and the most recent messages.",
+    JSON.stringify(buildNodePromptPayload(safeInput), null, 2),
+  ].join("\n");
+};
+
+const tryParseJsonCandidate = (candidate: string): unknown => {
+  const normalized = candidate
+    .trim()
+    .replace(/^\uFEFF/, "")
+    .replace(/,\s*([}\]])/g, "$1");
+
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(normalized);
+  } catch {
+    return null;
+  }
+};
+
+const parseModelJson = (content: string): unknown => {
+  const stripped = content
+    .trim()
+    .replace(/^```json/i, "")
+    .replace(/^```/i, "")
+    .replace(/```$/i, "")
+    .trim();
+
+  const candidates = new Set<string>();
+  if (stripped) {
+    candidates.add(stripped);
+  }
+
+  const objectStart = stripped.indexOf("{");
+  const objectEnd = stripped.lastIndexOf("}");
+  if (objectStart >= 0 && objectEnd > objectStart) {
+    candidates.add(stripped.slice(objectStart, objectEnd + 1));
+  }
+
+  const arrayStart = stripped.indexOf("[");
+  const arrayEnd = stripped.lastIndexOf("]");
+  if (arrayStart >= 0 && arrayEnd > arrayStart) {
+    candidates.add(stripped.slice(arrayStart, arrayEnd + 1));
+  }
+
+  for (const candidate of candidates) {
+    const parsed = tryParseJsonCandidate(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
+const parseAIPageResponseSafe = (
+  raw: unknown,
+  input: AIPageGenerateRequest,
+): AIPageGenerateResponse => {
+  const safeInput = sanitizePageInput(input);
+  try {
+    return parseAIPageResponse(raw, safeInput);
+  } catch {
+    return fallbackPage(safeInput);
+  }
+};
+
+const splitInstructionLines = (instruction: string): string[] =>
+  splitPromptSegments(instruction)
+    .map((value) => compactText(value, 120))
+    .filter(Boolean);
+
+const extractUrl = (
+  instruction: string,
+  fallback = "https://example.com",
+): string => {
+  const matched = instruction.match(/https?:\/\/\S+/i);
+  return matched?.[0] ?? fallback;
+};
+
+const buildListItems = (instruction: string): string[] => {
+  const items = splitInstructionLines(instruction)
+    .map((value) => compactText(value, 42))
+    .filter(Boolean)
+    .slice(0, 5);
+
+  if (items.length > 0) {
+    return items;
+  }
+
+  return [compactText(instruction, 42) || "List item 1"];
+};
+
+const pickButtonLabel = (
+  instruction: string,
+  fallback = "Learn more",
+): string =>
+  compactText(splitInstructionLines(instruction)[0] ?? instruction, 16) || fallback;
+
+const updateContainerChildren = (
+  node: EditorNode,
+  instruction: string,
+): EditorNode => {
+  const lines = splitInstructionLines(instruction);
+  const heading = compactText(lines[0] ?? instruction, 36) || "Content block";
+  const body =
+    compactText(lines[1] ?? instruction, 160) ||
+    "Continue refining the content of this section.";
+  const buttonLabel = pickButtonLabel(lines[2] ?? "Learn more");
+
+  let updatedTitle = false;
+  let updatedParagraph = false;
+  let updatedButton = false;
+
+  const children = node.children.map((child) => {
+    const nextChild = cloneNode(child);
+
+    if (!updatedTitle && nextChild.type === "title") {
+      nextChild.props = {
+        ...nextChild.props,
+        content: heading,
+        level:
+          typeof nextChild.props.level === "string" ? nextChild.props.level : "h2",
+      };
+      updatedTitle = true;
+      return nextChild;
+    }
+
+    if (!updatedParagraph && ["paragraph", "text"].includes(nextChild.type)) {
+      nextChild.props = {
+        ...nextChild.props,
+        content: body,
+      };
+      updatedParagraph = true;
+      return nextChild;
+    }
+
+    if (!updatedButton && ["button", "link"].includes(nextChild.type)) {
+      if (nextChild.type === "button") {
+        nextChild.props = {
+          ...nextChild.props,
+          label: buttonLabel,
+        };
+      } else {
+        nextChild.props = {
+          ...nextChild.props,
+          label: buttonLabel,
+          href: extractUrl(instruction, String(nextChild.props.href ?? "")),
+        };
+      }
+      updatedButton = true;
+      return nextChild;
+    }
+
+    return nextChild;
+  });
+
+  if (!updatedTitle) {
+    children.unshift(
+      createNode(
+        "title",
+        { content: heading, level: "h2" },
+        { fontSize: "32px", fontWeight: "700", marginBottom: "12px" },
+      ),
+    );
+  }
+
+  if (!updatedParagraph) {
+    children.splice(
+      Math.min(children.length, 1),
+      0,
+      createNode(
+        "paragraph",
+        { content: body },
+        { fontSize: "16px", lineHeight: "1.7", color: "#5b6270" },
+      ),
+    );
+  }
+
+  if (!updatedButton) {
+    children.push(
+      createNode(
+        "button",
+        { label: buttonLabel, variant: "primary" },
+        { padding: "12px 24px", width: "fit-content" },
+      ),
+    );
+  }
+
+  return {
+    ...node,
+    children,
+  };
+};
+
+const buildFallbackNodeResponse = (
+  input: AINodeModifyProviderInput,
+): AINodeModifyResponse => {
+  const safeInput = sanitizeNodeInput(input);
+  const nextNode = cloneNode(safeInput.targetNode);
+  const instruction = safeInput.instruction;
+
+  switch (nextNode.type) {
+    case "title":
+      nextNode.props = {
+        ...nextNode.props,
+        content: compactText(instruction, 64) || "Updated title",
+        level: typeof nextNode.props.level === "string" ? nextNode.props.level : "h2",
+      };
+      break;
+    case "paragraph":
+    case "text":
+    case "nav":
+    case "li":
+      nextNode.props = {
+        ...nextNode.props,
+        content: compactText(instruction, 220) || "Updated content",
+      };
+      break;
+    case "button":
+      nextNode.props = {
+        ...nextNode.props,
+        label: pickButtonLabel(instruction, "Take action"),
+      };
+      break;
+    case "link":
+      nextNode.props = {
+        ...nextNode.props,
+        label: pickButtonLabel(instruction, "View details"),
+        href: extractUrl(instruction, String(nextNode.props.href ?? "")),
+      };
+      break;
+    case "input":
+      nextNode.props = {
+        ...nextNode.props,
+        placeholder: compactText(instruction, 40) || "Enter content",
+      };
+      break;
+    case "image":
+      nextNode.props = {
+        ...nextNode.props,
+        alt: compactText(instruction, 72) || "Image description",
+      };
+      break;
+    case "list":
+    case "ul":
+    case "ol":
+      nextNode.props = {
+        ...nextNode.props,
+        items: buildListItems(instruction),
+      };
+      break;
+    case "container":
+      return {
+        node: {
+          ...updateContainerChildren(nextNode, instruction),
+          id: safeInput.targetNode.id,
+          aiMeta: {
+            ...nextNode.aiMeta,
+            lastAppliedAt: new Date().toISOString(),
+            lastPrompt: instruction,
+          },
+        },
+        reasoningSummary:
+          "Updated the main content of the selected container based on the latest instruction.",
+        safetyFlags: [],
+      };
+    default:
+      break;
+  }
+
+  nextNode.id = safeInput.targetNode.id;
+  nextNode.aiMeta = {
+    ...nextNode.aiMeta,
+    lastAppliedAt: new Date().toISOString(),
+    lastPrompt: instruction,
+  };
+
+  return {
+    node: nextNode,
+    reasoningSummary: `Updated the selected ${safeInput.targetNode.type} node.`,
+    safetyFlags: [],
+  };
+};
+
+const resolveAINodeResponse = (
+  raw: unknown,
+  input: AINodeModifyProviderInput,
+): AINodeModifyResponse => {
+  const safeInput = sanitizeNodeInput(input);
+  const parsed = AINodeModelOutputSchema.safeParse(raw);
+  if (!parsed.success) {
+    return buildFallbackNodeResponse(safeInput);
+  }
+
+  const normalizedNode = normalizeNode(parsed.data.node);
+  if (!normalizedNode || normalizedNode.type !== safeInput.targetNode.type) {
+    return buildFallbackNodeResponse(safeInput);
+  }
+
+  normalizedNode.id = safeInput.targetNode.id;
+  normalizedNode.aiMeta = {
+    ...safeInput.targetNode.aiMeta,
+    ...normalizedNode.aiMeta,
+    lastAppliedAt: new Date().toISOString(),
+    lastPrompt: safeInput.instruction,
+  };
+
+  return {
+    node: normalizedNode,
+    reasoningSummary:
+      compactText(String(parsed.data.reasoningSummary ?? ""), 120) ||
+      `Updated the selected ${safeInput.targetNode.type} node.`,
+    safetyFlags: Array.isArray(parsed.data.safetyFlags)
+      ? parsed.data.safetyFlags
+      : [],
+  };
+};
 
 export const createFallbackProvider = (): AIProvider => ({
   async generatePageDraft(input) {
-    return fallbackPage(input);
+    return fallbackPage(sanitizePageInput(input));
+  },
+  async modifyNodeDraft(input) {
+    return buildFallbackNodeResponse(sanitizeNodeInput(input));
   },
 });
 
@@ -1509,17 +2225,38 @@ export const createOpenAICompatibleProvider = (
   const baseUrl = config.baseUrl ?? "https://api.openai.com/v1";
   const model = config.model ?? "gpt-4.1-mini";
 
+  const pageSystemPrompt = [
+    "You are the JSON page-generation engine for a visual web editor.",
+    "Your only output must be one valid JSON object with no markdown, commentary, code fences, or notes.",
+    "If the request is long, repetitive, or conflicting, compress it internally and keep only the clearest high-priority requirements.",
+    "The response must include title, nodes, pageStyle, reasoningSummary, safetyFlags.",
+    "Top-level nodes must be containers only, and every node must include type, props, style, children.",
+    `Allowed node types: ${SUPPORTED_AI_NODE_TYPES.join(", ")}.`,
+    "Allowed button variants are primary, outline, and soft only.",
+    "The result must be directly renderable, concise, and editable. Do not output HTML strings or placeholder explanations.",
+    "Never use placeholder copy like 标题文本, 按钮, 单行文本, 导航栏, lorem ipsum, or empty text props.",
+    "Never use fixed, absolute, or sticky positioning to place page sections.",
+    "For homepage-style requests, include a usable navigation area, a hero section, clear content cards, and a final CTA.",
+  ].join("\n");
+
+  const nodeSystemPrompt = [
+    "You are the JSON node-modification engine for a visual web editor.",
+    "Your only output must be one valid JSON object with no markdown, commentary, code fences, or notes.",
+    "The response must include node, reasoningSummary, safetyFlags.",
+    "node.type must remain exactly the same as the target node type.",
+    "Unless the user explicitly asks for it, preserve the original structure, sizing, and editable content.",
+  ].join("\n");
+
   const callModel = async (
     systemContent: string,
     userContent: string,
   ): Promise<unknown> => {
     if (!apiKey) {
-      console.log("No API key, skipping AI call");
       return null;
     }
 
     const isDeepSeek = baseUrl.includes("deepseek");
-    const requestBody: any = {
+    const requestBody: Record<string, unknown> = {
       model: isDeepSeek ? (config.model ?? "deepseek-chat") : model,
       temperature: 0.1,
       messages: [
@@ -1532,8 +2269,6 @@ export const createOpenAICompatibleProvider = (
       requestBody.response_format = { type: "json_object" };
     }
 
-    console.log("Calling AI API...", { baseUrl, model: requestBody.model });
-
     try {
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
@@ -1545,8 +2280,6 @@ export const createOpenAICompatibleProvider = (
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error("API request failed:", response.status, errorText);
         return null;
       }
 
@@ -1555,68 +2288,43 @@ export const createOpenAICompatibleProvider = (
       };
       const content = payload.choices?.[0]?.message?.content;
       if (!content) {
-        console.error("No content in API response:", payload);
         return null;
       }
 
-      try {
-        console.log("Parsing AI response...");
-        console.log("Raw content:", content);
-
-        let cleanContent = content.trim();
-
-        if (cleanContent.startsWith("```json")) {
-          cleanContent = cleanContent.slice(7);
-        } else if (cleanContent.startsWith("```")) {
-          cleanContent = cleanContent.slice(3);
-        }
-
-        if (cleanContent.endsWith("```")) {
-          cleanContent = cleanContent.slice(0, -3);
-        }
-
-        cleanContent = cleanContent.trim();
-        console.log("Cleaned content:", cleanContent);
-
-        return JSON.parse(cleanContent);
-      } catch (e) {
-        console.error("Failed to parse JSON:", content);
-        return null;
-      }
-    } catch (error) {
-      console.error("AI API call exception:", error);
+      return parseModelJson(content);
+    } catch {
       return null;
     }
   };
 
   return {
     async generatePageDraft(input) {
-      console.log("Starting AI page generation...");
-
-      let raw: unknown = await callModel(SYSTEM_PROMPT, buildUserPrompt(input));
-      let response = parseAIPageResponse(raw, input);
+      const safeInput = sanitizePageInput(input);
+      let raw = await callModel(pageSystemPrompt, buildPagePrompt(safeInput));
+      let response = parseAIPageResponseSafe(raw, safeInput);
 
       const usedFallback =
         !raw ||
         (response.document.meta?.source as string) === "ai-page-template";
 
-      if (usedFallback && apiKey) {
-        console.log(
-          "First attempt used fallback, retrying with strict prompt...",
-        );
-        raw = await callModel(SYSTEM_PROMPT, buildUserPromptStrict(input));
-        const retryResponse = parseAIPageResponse(raw, input);
+      if (usedFallback) {
+        raw = await callModel(pageSystemPrompt, buildPagePromptStrict(safeInput));
+        const retryResponse = parseAIPageResponseSafe(raw, safeInput);
         const retryNodes = retryResponse.document.root?.length ?? 0;
         if (retryNodes >= 2) {
           response = retryResponse;
         }
       }
 
-      console.log(
-        "AI page generation complete, nodes count:",
-        response.document.root?.length,
-      );
       return response;
+    },
+    async modifyNodeDraft(input) {
+      const safeInput = sanitizeNodeInput(input);
+      const raw = await callModel(nodeSystemPrompt, buildNodePrompt(safeInput));
+      return resolveAINodeResponse(raw, safeInput);
     },
   };
 };
+
+
+

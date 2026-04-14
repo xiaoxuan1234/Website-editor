@@ -2,15 +2,19 @@
   <nav
     ref="editableRef"
     class="nav-node"
-    :class="{ editable }"
-    :contenteditable="editable"
+    :class="{
+      editable,
+      'with-children': hasChildren,
+    }"
+    :contenteditable="hasChildren ? undefined : editable"
     spellcheck="false"
     @click.stop="handleSelect"
     @focus="handleSelect"
-    @blur="handleBlur"
+    @blur="hasChildren ? undefined : handleBlur"
     @keydown.enter.prevent="handleEnter"
   >
-    {{ content }}
+    <slot v-if="hasChildren" />
+    <template v-else>{{ content }}</template>
   </nav>
 </template>
 
@@ -27,10 +31,16 @@ const route = useRoute();
 const editableRef = ref<HTMLElement | null>(null);
 
 const content = computed(() => (props.node.props.content as string) || "导航栏");
-const editable = computed(() => !editorStore.previewMode && !route.path.startsWith("/preview/"));
+const hasChildren = computed(() => props.node.children.length > 0);
+const selectable = computed(
+  () => !editorStore.previewMode && !route.path.startsWith("/preview/")
+);
+const editable = computed(
+  () => !hasChildren.value && selectable.value
+);
 
 const handleSelect = () => {
-  if (!editable.value) {
+  if (!selectable.value) {
     return;
   }
   editorStore.selectNode(props.node.id);
@@ -62,6 +72,9 @@ const handleEnter = () => {
 watch(
   content,
   (value) => {
+    if (hasChildren.value) {
+      return;
+    }
     const host = editableRef.value;
     if (!host) {
       return;
@@ -86,6 +99,10 @@ watch(
   color: inherit;
   line-height: 1.6;
   background: transparent;
+}
+
+.nav-node.with-children {
+  min-height: 0;
 }
 
 .nav-node.editable {

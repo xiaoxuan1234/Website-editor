@@ -1,5 +1,6 @@
 ﻿import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
+import { normalizeAIPageDocument } from "@wg/ai-core";
 import { PreviewCreateRequestSchema } from "@wg/schema";
 import { pageVersions, pages, previewTokens, projects } from "../db/schema";
 import { createId, nowISO, parseDocument } from "../utils";
@@ -30,6 +31,7 @@ export const registerPreviewRoutes = async (app: FastifyInstance) => {
       return reply.code(404).send({ message: "页面不存在" });
     }
 
+    const normalizedDraft = normalizeAIPageDocument(parseDocument(pageRow.draftJson));
     const now = nowISO();
     const versionId = createId("version");
     await app.services.db.db
@@ -38,7 +40,7 @@ export const registerPreviewRoutes = async (app: FastifyInstance) => {
         id: versionId,
         pageId: pageRow.pageId,
         version: pageRow.version,
-        snapshotJson: pageRow.draftJson,
+        snapshotJson: JSON.stringify(normalizedDraft),
         createdAt: now,
       })
       .run();
@@ -82,7 +84,7 @@ export const registerPreviewRoutes = async (app: FastifyInstance) => {
     return {
       pageId: row.pageId,
       versionId: row.versionId,
-      document: parseDocument(row.snapshotJson),
+      document: normalizeAIPageDocument(parseDocument(row.snapshotJson)),
     };
   });
 };

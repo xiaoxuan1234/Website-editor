@@ -1,4 +1,4 @@
-import { computed, ref } from "vue";
+﻿import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import {
   createAddNodeCommand,
@@ -6,6 +6,7 @@ import {
   createDuplicateNodeCommand,
   createHistoryState,
   createMoveNodeCommand,
+  createReplaceNodeCommand,
   createUpdateDocumentMetaCommand,
   createUpdateNodePropsCommand,
   createUpdateNodeStyleCommand,
@@ -17,13 +18,14 @@ import {
   type HistoryState,
 } from "@wg/editor-core";
 import type {
+  AIChatMessage,
   EditorNode,
   NodeType,
   PageDocumentV2,
   PageSummary,
   Project,
 } from "@wg/schema";
-import { apiClient, type AuthTokens } from "@/lib/api";
+import { ApiError, apiClient, type AuthTokens } from "@/lib/api";
 import { createNode, createNodeId } from "@/lib/nodes";
 import {
   mergeResponsiveStylePatch,
@@ -78,6 +80,9 @@ export const useEditorStore = defineStore("editor", () => {
   const aiPageSummary = ref<string>("");
   const aiPageError = ref<string>("");
   const aiPageGenerating = ref(false);
+  const aiNodeSummary = ref<string>("");
+  const aiNodeError = ref<string>("");
+  const aiNodeGenerating = ref(false);
   const autoSaveError = ref<string>("");
   const lastSavedAt = ref<string>("");
   const localDraftCandidate = ref<LocalDraftEntry | null>(null);
@@ -123,6 +128,13 @@ export const useEditorStore = defineStore("editor", () => {
   const hasLocalDraftCandidate = computed(() =>
     Boolean(localDraftCandidate.value),
   );
+  const currentProject = computed<Project | null>(() => {
+    const projectId = currentProjectId.value;
+    if (!projectId) {
+      return null;
+    }
+    return projects.value.find((project) => project.id === projectId) ?? null;
+  });
 
   const cloneDoc = (value: PageDocumentV2): PageDocumentV2 =>
     JSON.parse(JSON.stringify(value)) as PageDocumentV2;
@@ -218,34 +230,46 @@ export const useEditorStore = defineStore("editor", () => {
     persistAuth();
   };
 
-  const ensureToken = async () => {
+  const clearAutoSaveTimer = () => {
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = null;
+    }
+  };
+
+  const ensureToken = () => {
     if (!tokens.value) {
-      throw new Error("未登录");
+      throw new ApiError("未登录", 401, "UNAUTHORIZED");
     }
 
     return tokens.value.accessToken;
   };
 
+  const isUnauthorizedError = (error: unknown): error is ApiError =>
+    error instanceof ApiError && error.status === 401;
+
   const withRefresh = async <T>(
     action: (token: string) => Promise<T>,
   ): Promise<T> => {
+    const accessToken = ensureToken();
+
     try {
-      const accessToken = await ensureToken();
       return await action(accessToken);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      if (
-        !tokens.value ||
-        (!message.includes("401") && !message.includes("Unauthorized"))
-      ) {
+      if (!tokens.value || !isUnauthorizedError(error)) {
         throw error;
       }
 
-      const refreshed = await apiClient.refresh(tokens.value.refreshToken);
-      tokens.value = refreshed;
-      persistAuth();
+      try {
+        const refreshed = await apiClient.refresh(tokens.value.refreshToken);
+        tokens.value = refreshed;
+        persistAuth();
 
-      return action(refreshed.accessToken);
+        return await action(refreshed.accessToken);
+      } catch (refreshError) {
+        clearAuth();
+        throw refreshError;
+      }
     }
   };
 
@@ -256,6 +280,51 @@ export const useEditorStore = defineStore("editor", () => {
   const touchDocument = () => {
     doc.value.updatedAt = new Date().toISOString();
     doc.value.status = "draft";
+  };
+
+  const createDraftDocumentSnapshot = (
+    source: PageDocumentV2 = doc.value,
+  ): PageDocumentV2 => ({
+    ...cloneDoc(source),
+    id: currentPageId.value || source.id,
+    projectId: currentProjectId.value || source.projectId,
+    status: "draft",
+    updatedAt: new Date().toISOString(),
+  });
+
+  const applyDocumentState = (nextDoc: PageDocumentV2) => {
+    doc.value = cloneDoc(nextDoc);
+    selectedNodeId.value = doc.value.root[0]?.id ?? "";
+    resetHistory();
+  };
+
+  const toPageSummary = (page: {
+    id: string;
+    projectId: string;
+    title: string;
+    status: "draft" | "published";
+    version: number;
+    updatedAt: string;
+  }): PageSummary => ({
+    id: page.id,
+    projectId: page.projectId,
+    title: page.title,
+    status: page.status,
+    version: page.version,
+    updatedAt: page.updatedAt,
+  });
+
+  const ensureProjectPages = async (projectId: string): Promise<PageSummary[]> => {
+    const detail = await withRefresh((token) => apiClient.getProject(token, projectId));
+    if (detail.pages.length > 0) {
+      return detail.pages;
+    }
+
+    const createdPage = await withRefresh((token) =>
+      apiClient.createPage(token, projectId, "棣栭〉"),
+    );
+
+    return [toPageSummary(createdPage)];
   };
 
   const clearPendingTimers = () => {
@@ -341,9 +410,7 @@ export const useEditorStore = defineStore("editor", () => {
     const pageId = currentPageId.value;
     const projectId = currentProjectId.value;
 
-    if (autoSaveTimer) {
-      clearTimeout(autoSaveTimer);
-    }
+    clearAutoSaveTimer();
 
     autoSaveTimer = setTimeout(async () => {
       if (pageId !== currentPageId.value) {
@@ -352,17 +419,16 @@ export const useEditorStore = defineStore("editor", () => {
 
       try {
         saving.value = true;
-        await withRefresh((token) =>
-          apiClient.saveDraft(token, pageId, {
-            ...doc.value,
-            id: pageId,
-            projectId,
-            updatedAt: new Date().toISOString(),
-            status: "draft",
-          }),
+        const payload = createDraftDocumentSnapshot({
+          ...doc.value,
+          id: pageId,
+          projectId,
+        });
+        const saved = await withRefresh((token) =>
+          apiClient.saveDraft(token, pageId, payload),
         );
         autoSaveError.value = "";
-        lastSavedAt.value = new Date().toISOString();
+        lastSavedAt.value = saved.updatedAt;
         clearLocalDraftSnapshot(pageId);
       } catch {
         autoSaveError.value = "自动保存失败，请点击“保存”重试";
@@ -416,6 +482,7 @@ export const useEditorStore = defineStore("editor", () => {
 
   const logout = () => {
     flushPendingEdits();
+    clearAutoSaveTimer();
     clearAuth();
     initialized.value = false;
     projects.value = [];
@@ -427,6 +494,9 @@ export const useEditorStore = defineStore("editor", () => {
     aiPageSummary.value = "";
     aiPageError.value = "";
     aiPageGenerating.value = false;
+    aiNodeSummary.value = "";
+    aiNodeError.value = "";
+    aiNodeGenerating.value = false;
     autoSaveError.value = "";
     lastSavedAt.value = "";
     localDraftCandidate.value = null;
@@ -438,11 +508,112 @@ export const useEditorStore = defineStore("editor", () => {
     const page = await withRefresh((token) => apiClient.getPage(token, pageId));
     currentPageId.value = page.id;
     currentProjectId.value = page.projectId;
-    doc.value = page.document;
-    selectedNodeId.value = page.document.root[0]?.id ?? "";
+    applyDocumentState(page.document);
     autoSaveError.value = "";
-    resetHistory();
     syncLocalDraftCandidate(page.id, page.document);
+  };
+
+  const switchProject = async (projectId: string) => {
+    if (!projectId || projectId === currentProjectId.value) {
+      return true;
+    }
+
+    flushPendingEdits();
+    if (currentPageId.value) {
+      const saved = await saveNow();
+      if (!saved) {
+        return false;
+      }
+    }
+
+    const projectPages = await ensureProjectPages(projectId);
+    pages.value = projectPages;
+    currentProjectId.value = projectId;
+
+    const activePage = projectPages[0];
+    if (!activePage) {
+      currentPageId.value = "";
+      applyDocumentState(createEmptyDoc());
+      return true;
+    }
+
+    await loadPage(activePage.id);
+    return true;
+  };
+
+  const createProject = async (name: string): Promise<Project | null> => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      return null;
+    }
+
+    const created = await withRefresh((token) =>
+      apiClient.createProject(token, trimmedName),
+    );
+    projects.value = [
+      created,
+      ...projects.value.filter((project) => project.id !== created.id),
+    ];
+    const switched = await switchProject(created.id);
+    return switched ? created : null;
+  };
+
+  const renameProject = async (projectId: string, name: string): Promise<boolean> => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      return false;
+    }
+
+    const updated = await withRefresh((token) =>
+      apiClient.updateProject(token, projectId, trimmedName),
+    );
+    projects.value = projects.value.map((project) =>
+      project.id === projectId ? updated : project,
+    );
+    return true;
+  };
+
+  const deleteProject = async (projectId: string): Promise<boolean> => {
+    if (!projectId) {
+      return false;
+    }
+
+    flushPendingEdits();
+    const deletingCurrent = currentProjectId.value === projectId;
+    if (deletingCurrent && currentPageId.value) {
+      const saved = await saveNow();
+      if (!saved) {
+        return false;
+      }
+    }
+
+    await withRefresh((token) => apiClient.deleteProject(token, projectId));
+    projects.value = projects.value.filter((project) => project.id !== projectId);
+
+    if (deletingCurrent) {
+      pages.value = [];
+      currentProjectId.value = "";
+      currentPageId.value = "";
+      applyDocumentState(createEmptyDoc());
+      localDraftCandidate.value = null;
+    }
+
+    if (projects.value.length === 0) {
+      const created = await withRefresh((token) =>
+        apiClient.createProject(token, "榛樿椤圭洰"),
+      );
+      projects.value = [created];
+    }
+
+    if (!currentProjectId.value || deletingCurrent) {
+      const nextProject = projects.value[0];
+      if (!nextProject) {
+        return false;
+      }
+      return switchProject(nextProject.id);
+    }
+
+    return true;
   };
 
   const restoreLocalDraft = () => {
@@ -452,17 +623,9 @@ export const useEditorStore = defineStore("editor", () => {
       return false;
     }
 
-    doc.value = {
-      ...cloneDoc(candidate.document),
-      id: currentPageId.value,
-      projectId: currentProjectId.value,
-      status: "draft",
-      updatedAt: new Date().toISOString(),
-    };
-    selectedNodeId.value = doc.value.root[0]?.id ?? "";
-    autoSaveError.value = "已恢复本地草稿，正在同步保存";
+    applyDocumentState(createDraftDocumentSnapshot(candidate.document));
+    autoSaveError.value = "宸叉仮澶嶆湰鍦拌崏绋匡紝姝ｅ湪鍚屾淇濆瓨";
     localDraftCandidate.value = null;
-    resetHistory();
     queueAutoSave();
     return true;
   };
@@ -488,7 +651,7 @@ export const useEditorStore = defineStore("editor", () => {
 
       if (projects.value.length === 0) {
         const created = await withRefresh((token) =>
-          apiClient.createProject(token, "默认项目"),
+          apiClient.createProject(token, "榛樿椤圭洰"),
         );
         projects.value = [created];
       }
@@ -499,26 +662,7 @@ export const useEditorStore = defineStore("editor", () => {
       }
 
       currentProjectId.value = activeProject.id;
-      const projectDetail = await withRefresh((token) =>
-        apiClient.getProject(token, activeProject.id),
-      );
-      pages.value = projectDetail.pages;
-
-      if (pages.value.length === 0) {
-        const createdPage = await withRefresh((token) =>
-          apiClient.createPage(token, activeProject.id, "首页"),
-        );
-        pages.value = [
-          {
-            id: createdPage.id,
-            projectId: createdPage.projectId,
-            title: createdPage.title,
-            status: createdPage.status,
-            version: createdPage.version,
-            updatedAt: createdPage.updatedAt,
-          },
-        ];
-      }
+      pages.value = await ensureProjectPages(activeProject.id);
 
       const activePage = pages.value[0];
       if (!activePage) {
@@ -722,27 +866,72 @@ export const useEditorStore = defineStore("editor", () => {
         }),
       );
 
-      const newDoc = {
-        ...result.document,
-        id: currentPageId.value,
-        projectId: currentProjectId.value,
-        status: "draft" as const,
-        updatedAt: new Date().toISOString(),
-      };
-
-      doc.value = JSON.parse(JSON.stringify(newDoc));
-      selectedNodeId.value = doc.value.root[0]?.id ?? "";
+      applyDocumentState(createDraftDocumentSnapshot(result.document));
       aiPageSummary.value = result.reasoningSummary || "AI 已生成智能网页";
-      resetHistory();
-      touchDocument();
       queueAutoSave();
       return true;
     } catch (error) {
-      aiPageError.value =
-        error instanceof Error ? error.message : "网页生成失败";
+      aiPageError.value = error instanceof Error ? error.message : "缃戦〉鐢熸垚澶辫触";
       return false;
     } finally {
       aiPageGenerating.value = false;
+    }
+  };
+
+  const modifySelectedNodeWithAI = async (payload: {
+    instruction: string;
+    conversation?: AIChatMessage[];
+    language?: string;
+  }): Promise<boolean> => {
+    flushPendingEdits();
+    aiNodeError.value = "";
+    aiNodeSummary.value = "";
+
+    const targetNode = selectedNode.value;
+    if (!targetNode) {
+      aiNodeError.value = "请先选中一个元素";
+      return false;
+    }
+
+    if (!currentPageId.value || !currentProjectId.value) {
+      aiNodeError.value = "页面上下文未初始化";
+      return false;
+    }
+
+    const instruction = payload.instruction.trim();
+    if (!instruction) {
+      aiNodeError.value = "请输入修改要求";
+      return false;
+    }
+
+    aiNodeGenerating.value = true;
+    try {
+      const saved = await saveNow();
+      if (!saved) {
+        aiNodeError.value = autoSaveError.value || "淇濆瓨褰撳墠椤甸潰澶辫触";
+        return false;
+      }
+
+      const result = await withRefresh((token) =>
+        apiClient.modifyAINode(token, {
+          projectId: currentProjectId.value,
+          pageId: currentPageId.value,
+          targetNodeId: targetNode.id,
+          instruction,
+          conversation: payload.conversation,
+          language: payload.language,
+        }),
+      );
+
+      applyCommand(createReplaceNodeCommand(targetNode.id, result.node));
+      selectedNodeId.value = targetNode.id;
+      aiNodeSummary.value = result.reasoningSummary || "已更新当前元素";
+      return true;
+    } catch (error) {
+      aiNodeError.value = error instanceof Error ? error.message : "AI 淇敼澶辫触";
+      return false;
+    } finally {
+      aiNodeGenerating.value = false;
     }
   };
 
@@ -753,24 +942,20 @@ export const useEditorStore = defineStore("editor", () => {
     }
 
     const pageId = currentPageId.value;
-
-    if (autoSaveTimer) {
-      clearTimeout(autoSaveTimer);
-      autoSaveTimer = null;
-    }
+    clearAutoSaveTimer();
 
     saving.value = true;
     try {
-      await withRefresh((token) =>
-        apiClient.saveDraft(token, pageId, doc.value),
+      const saved = await withRefresh((token) =>
+        apiClient.saveDraft(token, pageId, createDraftDocumentSnapshot()),
       );
       autoSaveError.value = "";
-      lastSavedAt.value = new Date().toISOString();
+      lastSavedAt.value = saved.updatedAt;
       clearLocalDraftSnapshot(pageId);
       localDraftCandidate.value = null;
       return true;
     } catch (error) {
-      autoSaveError.value = error instanceof Error ? error.message : "保存失败";
+      autoSaveError.value = error instanceof Error ? error.message : "淇濆瓨澶辫触";
       saveLocalDraftSnapshot(pageId, doc.value);
       return false;
     } finally {
@@ -841,6 +1026,7 @@ export const useEditorStore = defineStore("editor", () => {
     doc,
     selectedNodeId,
     selectedNode,
+    currentProject,
     pageStyle,
     previewMode,
     deviceMode,
@@ -852,6 +1038,9 @@ export const useEditorStore = defineStore("editor", () => {
     aiPageSummary,
     aiPageError,
     aiPageGenerating,
+    aiNodeSummary,
+    aiNodeError,
+    aiNodeGenerating,
     autoSaveError,
     lastSavedAt,
     localDraftCandidate,
@@ -863,6 +1052,10 @@ export const useEditorStore = defineStore("editor", () => {
     logout,
     boot,
     loadPage,
+    switchProject,
+    createProject,
+    renameProject,
+    deleteProject,
     restoreLocalDraft,
     discardLocalDraft,
     selectNode,
@@ -880,9 +1073,11 @@ export const useEditorStore = defineStore("editor", () => {
     undo,
     redo,
     generateAIPage,
+    modifySelectedNodeWithAI,
     saveNow,
     publish,
     createPreview,
     exportJson,
   };
 });
+

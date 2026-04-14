@@ -151,7 +151,7 @@ h1 {
 }
 
 .canvas {
-  max-width: 980px;
+  width: min(1160px, 100%);
   min-height: 360px;
   margin: 0 auto;
   border: 1px solid #d8deea;
@@ -162,11 +162,11 @@ h1 {
 }
 
 .canvas.device-tablet {
-  max-width: 860px;
+  width: min(860px, 88%);
 }
 
 .canvas.device-mobile {
-  max-width: 440px;
+  width: min(440px, 92%);
 }
 
 .canvas > :first-child {

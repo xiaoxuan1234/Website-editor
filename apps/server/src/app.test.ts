@@ -66,6 +66,58 @@ describe("server basic flow", () => {
     pageId = createPage.json().id;
   });
 
+  test("update and delete project", async () => {
+    const createProject = await app.inject({
+      method: "POST",
+      url: "/projects",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+      payload: {
+        name: "Project For Update/Delete",
+      },
+    });
+
+    expect(createProject.statusCode).toBe(201);
+    const anotherProjectId = (createProject.json() as { id: string }).id;
+
+    const updateProject = await app.inject({
+      method: "PUT",
+      url: `/projects/${anotherProjectId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+      payload: {
+        name: "Project Renamed",
+      },
+    });
+
+    expect(updateProject.statusCode).toBe(200);
+    const updatePayload = updateProject.json() as { name: string };
+    expect(updatePayload.name).toBe("Project Renamed");
+
+    const deleteProject = await app.inject({
+      method: "DELETE",
+      url: `/projects/${anotherProjectId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    expect(deleteProject.statusCode).toBe(200);
+    expect((deleteProject.json() as { ok: boolean }).ok).toBe(true);
+
+    const getDeletedProject = await app.inject({
+      method: "GET",
+      url: `/projects/${anotherProjectId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    expect(getDeletedProject.statusCode).toBe(404);
+  });
+
   test("load page and publish", async () => {
     const getPage = await app.inject({
       method: "GET",
@@ -152,6 +204,94 @@ describe("server basic flow", () => {
     expect(getPreview.statusCode).toBe(200);
     const previewPayload = getPreview.json() as { document: { title: string } };
     expect(previewPayload.document.title).toBe(draftTitle);
+  });
+
+  test("AI page generation should handle long prompts", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/ai/page/generate",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+      payload: {
+        projectId,
+        pageId,
+        instruction: `Create a product landing page ${"fast reliable scalable ".repeat(300)}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      document: { root: unknown[] };
+      reasoningSummary: string;
+    };
+    expect(body.document.root.length).toBeGreaterThan(0);
+    expect(body.reasoningSummary).toBeTruthy();
+  });
+
+  test("AI node modify should update selected node", async () => {
+    const targetNodeId = "node_target_paragraph";
+    const saveDraft = await app.inject({
+      method: "PUT",
+      url: `/pages/${pageId}/draft`,
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+      payload: {
+        document: {
+          id: pageId,
+          projectId,
+          title: "Landing Page",
+          status: "draft",
+          version: 1,
+          updatedAt: new Date().toISOString(),
+          root: [
+            {
+              id: targetNodeId,
+              type: "paragraph",
+              props: { content: "Old content" },
+              style: {},
+              children: [],
+              aiMeta: {},
+            },
+          ],
+          meta: {},
+        },
+      },
+    });
+
+    expect(saveDraft.statusCode).toBe(200);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/ai/node/modify",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+      payload: {
+        projectId,
+        pageId,
+        targetNodeId,
+        instruction: "Rewrite this paragraph to emphasize speed and reliability",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      node: {
+        id: string;
+        type: string;
+        props: { content?: string };
+        aiMeta: { lastPrompt?: string };
+      };
+      reasoningSummary: string;
+    };
+
+    expect(body.node.id).toBe(targetNodeId);
+    expect(body.node.type).toBe("paragraph");
+    expect(body.node.props.content).toContain("speed");
+    expect(body.node.aiMeta.lastPrompt).toContain("speed");
+    expect(body.reasoningSummary).toBeTruthy();
   });
 
   test("save draft invalid body should return structured error", async () => {

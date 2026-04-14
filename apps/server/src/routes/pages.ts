@@ -1,13 +1,19 @@
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
+import { normalizeAIPageDocument } from "@wg/ai-core";
 import {
   CreatePageRequestSchema,
   PageDocumentV2Schema,
+  type PageDocumentV2,
   SaveDraftRequestSchema,
 } from "@wg/schema";
 import { pageVersions, pages, previewTokens } from "../db/schema";
 import { createId, createInitialDocument, nowISO, parseDocument } from "../utils";
 import { ensurePageOwnership, ensureProjectOwnership, parseBody } from "./helpers";
+
+const normalizeStoredDocument = (
+  document: PageDocumentV2,
+): PageDocumentV2 => normalizeAIPageDocument(document);
 
 export const registerPageRoutes = async (app: FastifyInstance) => {
   app.post(
@@ -80,6 +86,21 @@ export const registerPageRoutes = async (app: FastifyInstance) => {
       return reply.code(404).send({ message: "Page not found" });
     }
 
+    const parsedDocument = parseDocument(page.draftJson);
+    const document = normalizeStoredDocument(parsedDocument);
+
+    if (JSON.stringify(parsedDocument) !== JSON.stringify(document)) {
+      await app.services.db.db
+        .update(pages)
+        .set({
+          title: document.title,
+          draftJson: JSON.stringify(document),
+          updatedAt: page.updatedAt,
+        })
+        .where(eq(pages.id, id))
+        .run();
+    }
+
     return {
       id: page.id,
       projectId: page.projectId,
@@ -87,7 +108,7 @@ export const registerPageRoutes = async (app: FastifyInstance) => {
       status: page.status,
       version: page.version,
       updatedAt: page.updatedAt,
-      document: parseDocument(page.draftJson),
+      document,
     };
   });
 
@@ -165,12 +186,12 @@ export const registerPageRoutes = async (app: FastifyInstance) => {
       const version = page.version + 1;
       const versionId = createId("version");
       const slug = createId("preview").replace("preview_", "pv-");
-      const publishedDoc = {
+      const publishedDoc = normalizeStoredDocument({
         ...parseDocument(page.draftJson),
         status: "published" as const,
         version,
         updatedAt: now,
-      };
+      });
 
       await app.services.db.db
         .insert(pageVersions)
@@ -237,7 +258,7 @@ export const registerPageRoutes = async (app: FastifyInstance) => {
 
       return {
         fileName: `${page.title || "page"}.json`,
-        document: parseDocument(page.draftJson),
+        document: normalizeStoredDocument(parseDocument(page.draftJson)),
       };
     }
   );

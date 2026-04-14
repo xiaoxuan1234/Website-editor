@@ -112,6 +112,21 @@ export const removeNodeById = (doc: PageDocumentV2, id: string): RemovedNode | n
   };
 };
 
+export const replaceNodeById = (
+  doc: PageDocumentV2,
+  id: string,
+  nextNode: EditorNode
+): EditorNode | null => {
+  const location = findNodeLocation(doc.root, id);
+  if (!location) {
+    return null;
+  }
+
+  const previous = clone(location.node);
+  location.list.splice(location.index, 1, nextNode);
+  return previous;
+};
+
 const duplicateNodeTree = (node: EditorNode, createId: () => string): EditorNode => ({
   ...clone(node),
   id: createId(),
@@ -338,6 +353,33 @@ export const createUpdateNodeStyleCommand = (
       }
 
       node.style = clone(previousStyle);
+    },
+  };
+};
+
+export const createReplaceNodeCommand = (
+  nodeId: string,
+  nextNode: EditorNode
+): EditorCommand => {
+  let previousNode: EditorNode | null = null;
+  const nextSnapshot = {
+    ...clone(nextNode),
+    id: nodeId,
+  };
+
+  return {
+    label: "ReplaceNode",
+    do(state) {
+      const replaced = replaceNodeById(state.doc, nodeId, clone(nextSnapshot));
+      if (replaced && !previousNode) {
+        previousNode = replaced;
+      }
+    },
+    undo(state) {
+      if (!previousNode) {
+        return;
+      }
+      replaceNodeById(state.doc, nodeId, clone(previousNode));
     },
   };
 };

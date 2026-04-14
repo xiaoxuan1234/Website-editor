@@ -1,8 +1,9 @@
-﻿import { mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createServer } from "./app";
 
 const start = async () => {
+  process.loadEnvFile("d:/bishe/apps/server/.env");
   const dbPath = process.env.DB_PATH ?? "./data/app.db";
   mkdirSync(dirname(dbPath), { recursive: true });
   const parsedBodyLimit =
