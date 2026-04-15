@@ -141,6 +141,29 @@ describe("server basic flow", () => {
     expect(publish.json().slug).toBeTruthy();
   });
 
+  test("export should return html and css content", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: `/pages/${pageId}/export-json`,
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const payload = response.json() as {
+      htmlFileName: string;
+      cssFileName: string;
+      html: string;
+      css: string;
+    };
+
+    expect(payload.htmlFileName.endsWith(".html")).toBe(true);
+    expect(payload.cssFileName.endsWith(".css")).toBe(true);
+    expect(payload.html).toContain(`<link rel="stylesheet" href="${payload.cssFileName}"`);
+    expect(payload.css).toContain(".wg-page");
+  });
+
   test("preview should read latest draft", async () => {
     const getPage = await app.inject({
       method: "GET",

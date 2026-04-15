@@ -122,7 +122,7 @@ onMounted(async () => {
 .preview-page {
   min-height: 100%;
   background: #f4f7fb;
-  padding: 20px;
+  padding: 0;
   box-sizing: border-box;
 }
 
@@ -130,7 +130,8 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 14px;
+  margin: 0;
+  padding: 12px 16px;
 }
 
 .back-link {
@@ -151,22 +152,14 @@ h1 {
 }
 
 .canvas {
-  width: min(1160px, 100%);
+  width: 100%;
   min-height: 360px;
-  margin: 0 auto;
+  margin: 0;
   border: 1px solid #d8deea;
   border-radius: 0;
   background: #fff;
   padding: 0;
   box-sizing: border-box;
-}
-
-.canvas.device-tablet {
-  width: min(860px, 88%);
-}
-
-.canvas.device-mobile {
-  width: min(440px, 92%);
 }
 
 .canvas > :first-child {

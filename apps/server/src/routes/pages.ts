@@ -8,12 +8,25 @@ import {
   SaveDraftRequestSchema,
 } from "@wg/schema";
 import { pageVersions, pages, previewTokens } from "../db/schema";
+import { renderDocumentToHtmlCss } from "../utils/export-html";
 import { createId, createInitialDocument, nowISO, parseDocument } from "../utils";
 import { ensurePageOwnership, ensureProjectOwnership, parseBody } from "./helpers";
 
 const normalizeStoredDocument = (
   document: PageDocumentV2,
 ): PageDocumentV2 => normalizeAIPageDocument(document);
+
+const toSafeFileNameBase = (title: string): string => {
+  const sanitized = title
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+
+  return sanitized || "page";
+};
 
 export const registerPageRoutes = async (app: FastifyInstance) => {
   app.post(
@@ -256,9 +269,19 @@ export const registerPageRoutes = async (app: FastifyInstance) => {
         return reply.code(404).send({ message: "Page not found" });
       }
 
+      const fileBase = toSafeFileNameBase(page.title || "page");
+      const htmlFileName = `${fileBase}.html`;
+      const cssFileName = `${fileBase}.css`;
+      const document = normalizeStoredDocument(parseDocument(page.draftJson));
+      const rendered = renderDocumentToHtmlCss(document, {
+        cssFileName,
+      });
+
       return {
-        fileName: `${page.title || "page"}.json`,
-        document: normalizeStoredDocument(parseDocument(page.draftJson)),
+        htmlFileName,
+        cssFileName,
+        html: rendered.html,
+        css: rendered.css,
       };
     }
   );

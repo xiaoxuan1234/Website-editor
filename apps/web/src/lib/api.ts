@@ -109,44 +109,6 @@ const request = async <T>(
   return (await response.json()) as T;
 };
 
-const parseDownloadFileName = (
-  contentDisposition: string | null,
-): string | null => {
-  if (!contentDisposition) {
-    return null;
-  }
-
-  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8Match?.[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1]);
-    } catch {
-      return null;
-    }
-  }
-
-  const plainMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
-  return plainMatch?.[1]?.trim() || null;
-};
-
-const requestBlob = async (
-  path: string,
-  options: RequestInit = {},
-  accessToken?: string,
-): Promise<{ blob: Blob; fileName: string }> => {
-  const response = await fetchApi(path, options, accessToken);
-  if (!response.ok) {
-    throw await createApiError(response);
-  }
-
-  return {
-    blob: await response.blob(),
-    fileName:
-      parseDownloadFileName(response.headers.get("Content-Disposition")) ||
-      "page-export.zip",
-  };
-};
-
 const trimConversation = (conversation?: AIChatMessage[]) => {
   if (!conversation || conversation.length === 0) {
     return undefined;
@@ -296,7 +258,29 @@ export const apiClient = {
   },
 
   async exportJson(accessToken: string, pageId: string) {
-    return requestBlob(`/pages/${pageId}/export-zip`, {}, accessToken);
+    const payload = await request<{
+      htmlFileName: string;
+      cssFileName: string;
+      html: string;
+      css: string;
+    }>(
+      `/pages/${pageId}/export-json`,
+      {},
+      accessToken,
+    );
+
+    return {
+      files: [
+        {
+          blob: new Blob([payload.html], { type: "text/html;charset=utf-8" }),
+          fileName: payload.htmlFileName || "page.html",
+        },
+        {
+          blob: new Blob([payload.css], { type: "text/css;charset=utf-8" }),
+          fileName: payload.cssFileName || "styles.css",
+        },
+      ],
+    };
   },
 
   async createPreview(accessToken: string, pageId: string) {

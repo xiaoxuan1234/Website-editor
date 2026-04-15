@@ -1001,7 +1001,12 @@ export const useEditorStore = defineStore("editor", () => {
 
   const exportJson = async () => {
     flushPendingEdits();
-    if (!currentPageId.value) {
+    if (!currentPageId.value || !tokens.value) {
+      return;
+    }
+
+    const saved = await saveNow();
+    if (!saved) {
       return;
     }
 
@@ -1009,12 +1014,16 @@ export const useEditorStore = defineStore("editor", () => {
       apiClient.exportJson(token, currentPageId.value),
     );
 
-    const url = URL.createObjectURL(payload.blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = payload.fileName;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    payload.files.forEach((file) => {
+      const url = URL.createObjectURL(file.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = file.fileName;
+      anchor.click();
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+      }, 0);
+    });
   };
 
   return {

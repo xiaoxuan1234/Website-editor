@@ -1283,17 +1283,15 @@ const parseAIPageResponse = (
       .filter((item): item is EditorNode => Boolean(item)) ?? [];
 
   const normalizedNodes = normalizeTopLevelNodes(nodesRaw);
-  if (normalizedNodes.length < 2) {
-    throw new Error("AI generated too few nodes");
+  if (normalizedNodes.length < 1) {
+    throw new Error("AI generated no nodes");
   }
 
   const nodes = sanitizeGeneratedNodeCopy(adjustNodesByLength(input, normalizedNodes));
   const title =
     String(result.title ?? "").trim() || compactText(input.instruction, 48) || "Web Page";
 
-  if (isLowQualityAIPage(title, nodes, input.instruction)) {
-    throw new Error("AI generated placeholder-heavy content");
-  }
+  const lowQualityHint = isLowQualityAIPage(title, nodes, input.instruction);
 
   const document = normalizeAIPageDocument({
     id: input.pageId,
@@ -1317,7 +1315,10 @@ const parseAIPageResponse = (
     reasoningSummary:
       String(result.reasoningSummary ?? "").trim() ||
       "Generated a page based on your request. You can continue editing on the canvas.",
-    safetyFlags: Array.isArray(result.safetyFlags) ? result.safetyFlags : [],
+    safetyFlags: [
+      ...(Array.isArray(result.safetyFlags) ? result.safetyFlags : []),
+      ...(lowQualityHint ? ["LOW_QUALITY_HINT"] : []),
+    ],
   };
 };
 
@@ -2256,7 +2257,7 @@ export const createOpenAICompatibleProvider = (
     }
 
     const isDeepSeek = baseUrl.includes("deepseek");
-    const requestBody: Record<string, unknown> = {
+    const requestBodyBase: Record<string, unknown> = {
       model: isDeepSeek ? (config.model ?? "deepseek-chat") : model,
       temperature: 0.1,
       messages: [
@@ -2265,11 +2266,65 @@ export const createOpenAICompatibleProvider = (
       ],
     };
 
-    if (!isDeepSeek) {
-      requestBody.response_format = { type: "json_object" };
-    }
+    const parseCompletion = (payload: unknown): unknown => {
+      const typed = payload as {
+        choices?: Array<{
+          message?: {
+            content?:
+              | string
+              | Array<
+                  | string
+                  | {
+                      type?: string;
+                      text?: string | { value?: string };
+                      content?: string;
+                    }
+                >;
+          };
+        }>;
+      };
+      const content = typed.choices?.[0]?.message?.content;
 
-    try {
+      if (typeof content === "string") {
+        return parseModelJson(content);
+      }
+
+      if (!Array.isArray(content) || content.length === 0) {
+        return null;
+      }
+
+      const merged = content
+        .map((item) => {
+          if (typeof item === "string") {
+            return item;
+          }
+          if (!isObject(item)) {
+            return "";
+          }
+          if (typeof item.content === "string") {
+            return item.content;
+          }
+          if (typeof item.text === "string") {
+            return item.text;
+          }
+          if (isObject(item.text) && typeof item.text.value === "string") {
+            return item.text.value;
+          }
+          return "";
+        })
+        .join("\n")
+        .trim();
+
+      if (!merged) {
+        return null;
+      }
+
+      return parseModelJson(merged);
+    };
+
+    const postCompletion = async (
+      requestBody: Record<string, unknown>,
+    ): Promise<{ ok: boolean; parsed: unknown }> => {
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
@@ -2280,18 +2335,29 @@ export const createOpenAICompatibleProvider = (
       });
 
       if (!response.ok) {
-        return null;
+        return { ok: false, parsed: null };
       }
 
-      const payload = (await response.json()) as {
-        choices?: Array<{ message?: { content?: string } }>;
+      const payload = await response.json();
+      return { ok: true, parsed: parseCompletion(payload) };
+    };
+
+    try {
+      const withJsonFormat = {
+        ...requestBodyBase,
+        response_format: { type: "json_object" as const },
       };
-      const content = payload.choices?.[0]?.message?.content;
-      if (!content) {
-        return null;
+      const firstTry = await postCompletion(withJsonFormat);
+      if (firstTry.parsed) {
+        return firstTry.parsed;
       }
 
-      return parseModelJson(content);
+      const secondTry = await postCompletion(requestBodyBase);
+      if (secondTry.parsed) {
+        return secondTry.parsed;
+      }
+
+      return null;
     } catch {
       return null;
     }
@@ -2303,16 +2369,34 @@ export const createOpenAICompatibleProvider = (
       let raw = await callModel(pageSystemPrompt, buildPagePrompt(safeInput));
       let response = parseAIPageResponseSafe(raw, safeInput);
 
-      const usedFallback =
+      const isLowQuality = (value: AIPageGenerateResponse) =>
+        value.safetyFlags.includes("LOW_QUALITY_HINT");
+      const isTemplateFallback = (value: AIPageGenerateResponse) =>
+        (value.document.meta?.source as string) === "ai-page-template";
+      const needsRetry =
         !raw ||
-        (response.document.meta?.source as string) === "ai-page-template";
+        isTemplateFallback(response) ||
+        isLowQuality(response);
 
-      if (usedFallback) {
+      if (needsRetry) {
         raw = await callModel(pageSystemPrompt, buildPagePromptStrict(safeInput));
         const retryResponse = parseAIPageResponseSafe(raw, safeInput);
         const retryNodes = retryResponse.document.root?.length ?? 0;
-        if (retryNodes >= 2) {
+        const retryAccepted =
+          Boolean(raw) &&
+          retryNodes >= 2 &&
+          !isTemplateFallback(retryResponse) &&
+          !isLowQuality(retryResponse);
+
+        if (retryAccepted) {
           response = retryResponse;
+        } else if (isTemplateFallback(response) || isLowQuality(response)) {
+          response = fallbackPage(safeInput);
+          response.safetyFlags = Array.from(
+            new Set([...response.safetyFlags, "MODEL_QUALITY_FALLBACK"]),
+          );
+          response.reasoningSummary =
+            "Replaced low-quality model output with a stable editable draft based on your request.";
         }
       }
 
