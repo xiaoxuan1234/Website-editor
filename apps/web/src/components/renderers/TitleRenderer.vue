@@ -11,6 +11,7 @@
     @blur="handleBlur"
     @keydown.enter.prevent="handleEnter"
     v-html="content"
+    :style="nodeStyle"
   />
 </template>
 
@@ -19,6 +20,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import type { EditorNode } from "@wg/schema";
 import { useEditorStore } from "@/stores/editor";
+import { resolveNodeStyleByDevice } from "@/lib/style";
 
 const props = defineProps<{ node: EditorNode }>();
 
@@ -32,6 +34,7 @@ const headingTag = computed(() => {
   return ["h1", "h2", "h3", "h4", "h5", "h6"].includes(value) ? value : "h2";
 });
 const editable = computed(() => !editorStore.previewMode && !route.path.startsWith("/preview/"));
+const nodeStyle = computed(() => resolveNodeStyleByDevice(props.node, "desktop"));
 
 const handleSelect = () => {
   if (!editable.value) {

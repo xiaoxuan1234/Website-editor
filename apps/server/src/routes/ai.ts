@@ -32,6 +32,41 @@ const findNodeById = (
 };
 
 export const registerAIRoutes = async (app: FastifyInstance) => {
+  // Test endpoint for AI API connection
+  app.get("/ai/test", async (request, reply) => {
+    try {
+      // Check if OpenAI API key is set
+      const openAIApiKey = process.env.OPENAI_API_KEY;
+      if (!openAIApiKey) {
+        return reply.code(500).send({ success: false, message: "OpenAI API key not set" });
+      }
+      
+      // Check if OpenAI base URL is set
+      const openAIBaseUrl = process.env.OPENAI_BASE_URL;
+      if (!openAIBaseUrl) {
+        return reply.code(500).send({ success: false, message: "OpenAI base URL not set" });
+      }
+      
+      // Check if OpenAI model is set
+      const openAIModel = process.env.OPENAI_MODEL;
+      if (!openAIModel) {
+        return reply.code(500).send({ success: false, message: "OpenAI model not set" });
+      }
+      
+      return { 
+        success: true, 
+        message: "AI API configuration test successful",
+        config: {
+          openAIApiKey: openAIApiKey.substring(0, 4) + "****" + openAIApiKey.substring(openAIApiKey.length - 4),
+          openAIBaseUrl,
+          openAIModel
+        }
+      };
+    } catch (error) {
+      return reply.code(500).send({ success: false, message: "AI API configuration test failed", error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   app.post(
     "/ai/page/generate",
     { preHandler: app.authenticate },

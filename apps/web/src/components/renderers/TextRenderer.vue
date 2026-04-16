@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <span
     ref="editableRef"
     class="text-node"
@@ -9,6 +9,7 @@
     @focus="handleSelect"
     @blur="handleBlur"
     @keydown.enter.prevent="handleEnter"
+    :style="nodeStyle"
   >
     {{ content }}
   </span>
@@ -19,6 +20,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import type { EditorNode } from "@wg/schema";
 import { useEditorStore } from "@/stores/editor";
+import { resolveNodeStyleByDevice } from "@/lib/style";
 
 const props = defineProps<{ node: EditorNode }>();
 
@@ -28,6 +30,7 @@ const editableRef = ref<HTMLElement | null>(null);
 
 const content = computed(() => (props.node.props.content as string) || "单行文本");
 const editable = computed(() => !editorStore.previewMode && !route.path.startsWith("/preview/"));
+const nodeStyle = computed(() => resolveNodeStyleByDevice(props.node, "desktop"));
 
 const handleSelect = () => {
   if (!editable.value) {

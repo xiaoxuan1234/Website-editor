@@ -9,6 +9,7 @@
     @focus="handleSelect"
     @blur="handleBlur"
     v-html="content"
+    :style="nodeStyle"
   />
 </template>
 
@@ -17,6 +18,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import type { EditorNode } from "@wg/schema";
 import { useEditorStore } from "@/stores/editor";
+import { resolveNodeStyleByDevice } from "@/lib/style";
 
 const props = defineProps<{ node: EditorNode }>();
 
@@ -26,6 +28,7 @@ const editableRef = ref<HTMLElement | null>(null);
 
 const content = computed(() => (props.node.props.content as string) || "这是一段段落内容");
 const editable = computed(() => !editorStore.previewMode && !route.path.startsWith("/preview/"));
+const nodeStyle = computed(() => resolveNodeStyleByDevice(props.node, "desktop"));
 
 const handleSelect = () => {
   if (!editable.value) {

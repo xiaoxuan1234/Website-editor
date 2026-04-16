@@ -1745,55 +1745,128 @@ const buildPageRequirementList = (
   return requirements.filter((item): item is string => Boolean(item));
 };
 
+const PAGE_PROMPT_JSON_EXAMPLE = {
+  title: "Sample Landing Page",
+  nodes: [
+    {
+      type: "container",
+      props: { layout: "flow" },
+      style: {
+        width: "100%",
+        padding: "48px 40px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "16px",
+      },
+      children: [
+        {
+          type: "title",
+          props: { content: "Clear headline", level: "h1" },
+          style: {
+            fontSize: "40px",
+            fontWeight: "700",
+            color: "#111827",
+          },
+          children: [],
+        },
+        {
+          type: "paragraph",
+          props: { content: "Short supporting paragraph." },
+          style: {
+            fontSize: "16px",
+            lineHeight: "1.7",
+            color: "#475467",
+          },
+          children: [],
+        },
+      ],
+    },
+  ],
+  pageStyle: {
+    backgroundColor: "#ffffff",
+    fontFamily: FONT_STACK,
+  },
+  reasoningSummary: "Generated a stable editable page draft.",
+  safetyFlags: [],
+};
+
 const buildPagePromptPayload = (input: AIPageGenerateRequest) => {
   const language = resolvePromptLanguage(input.language, input.instruction);
   return {
-    instructionSummary: compactText(input.instruction, 260),
-    instructionHighlights: buildInstructionHighlights(input.instruction).filter(
-      (item) => !isInstructionalCopy(item),
-    ),
-    explicitRequirements: buildPageRequirementList(input, language),
-    preferredSections: input.sections ?? [],
-    keywords: input.keywords ?? [],
-    colorHints: {
-      primaryColor: input.primaryColor ?? "#3366ff",
-      secondaryColor: input.secondaryColor,
-      backgroundColor: input.backgroundColor,
-    },
-    outputRules: {
+    request: {
+      instructionSummary: compactText(input.instruction, 220),
+      keyGoals: buildInstructionHighlights(input.instruction, 5, 60).filter(
+        (item) => !isInstructionalCopy(item),
+      ),
+      pageType: input.pageType,
+      audience: input.audience,
+      industry: input.industry,
+      tone: input.tone,
+      style: input.style,
+      layout: input.layout,
+      contentFocus: input.contentFocus,
       language,
+      preferredSections: input.sections ?? [],
+      keywords: input.keywords ?? [],
+      colors: {
+        primaryColor: input.primaryColor ?? "#3366ff",
+        secondaryColor: input.secondaryColor,
+        backgroundColor: input.backgroundColor,
+      },
+    },
+    spec: {
+      requiredKeys: ["title", "nodes", "pageStyle", "reasoningSummary", "safetyFlags"],
+      nodeShape: {
+        type: "string",
+        props: "object",
+        style: "object",
+        children: "array",
+      },
       topLevelNodeType: "container",
       allowedNodeTypes: SUPPORTED_AI_NODE_TYPES,
       allowedButtonVariants: ["primary", "outline", "soft"],
-      targetSectionCount: resolveSectionTarget(input.length),
       minimumTopLevelSections: 2,
-      forbiddenLayoutRules: [
-        "Do not use fixed, absolute, or sticky positioning for page sections.",
-        "Do not place nodes outside their parent section.",
-        "Do not leave key text props empty or generic.",
-      ],
-      textRule:
-        "Keep copy concise, specific, editable, and free of HTML strings, explanatory prefaces, or prompt-echoed requirement text.",
+      targetSectionCount: resolveSectionTarget(input.length),
+      explicitRequirements: buildPageRequirementList(input, language),
     },
+    quality: {
+      prioritize: [
+        "valid JSON",
+        "renderable structure",
+        "editable content",
+        "visual coherence",
+      ],
+      doNot: [
+        "Do not echo the user's request as visible headings, paragraphs, card titles, or button labels.",
+        "Do not output placeholder copy such as 标题文本, 单行文本, 按钮, 导航栏, or lorem ipsum.",
+        "Do not output editor rules or layout instructions as user-facing content.",
+        "Do not use fixed, absolute, or sticky positioning for page sections.",
+        "Do not leave key text props empty, generic, or meaningless.",
+      ],
+      prefer: [
+        "Use concise real website copy.",
+        "Use normal-flow layouts with flex or grid.",
+        "Use clear section hierarchy and realistic CTA labels.",
+        "Prefer a recognizable landing-page structure when suitable.",
+        "Keep the result easy to edit in a visual editor.",
+      ],
+      imageRule:
+        "Use image nodes only when they clearly support the section. alt must be concise and meaningful.",
+      textRule:
+        "Visible text should read like real website copy, not prompt instructions or schema labels.",
+    },
+    exampleShape: PAGE_PROMPT_JSON_EXAMPLE,
   };
 };
 
 const buildPagePrompt = (input: AIPageGenerateRequest): string => {
   const safeInput = sanitizePageInput(input);
   return [
-    "Task: generate a page draft for a visual editor.",
-    "Return exactly one valid JSON object. No markdown, code fences, commentary, or extra text.",
-    "If the request is long, repetitive, or conflicting, compress it internally and keep only the clearest high-priority requirements.",
-    "Required keys: title, nodes, pageStyle, reasoningSummary, safetyFlags.",
-    "Top-level nodes must be containers only. Every node must include type, props, style, children.",
-    `Allowed node types: ${SUPPORTED_AI_NODE_TYPES.join(", ")}.`,
-    "Allowed button variants: primary, outline, soft.",
-    "Never output placeholder copy such as 标题文本, 单行文本, 按钮, 导航栏, 这是一段段落内容, or generic empty props.",
-    "Avoid empty image placeholders. If you cannot justify an image, use a content container instead.",
-    "Never reuse the user's request sentence, style rules, or layout constraints as visible page headings, card titles, or body copy.",
-    "Use normal document flow only. Never use fixed, absolute, sticky, top, left, right, or bottom for page-section layout.",
-    "For homepage-like requests, include a real navigation area, a hero section, content cards, and a clear final CTA.",
-    "The page must be renderable immediately. Keep copy concise and avoid lorem ipsum.",
+    "Generate a page draft for a visual web editor.",
+    "Return exactly one JSON object and nothing else.",
+    "Plan the page structure first internally, then produce the final JSON.",
+    "Follow the example for structure shape only, not for wording or layout duplication.",
+    "Every node must include type, props, style, and children.",
     JSON.stringify(buildPagePromptPayload(safeInput), null, 2),
   ].join("\n");
 };
@@ -1802,20 +1875,31 @@ const buildPagePromptStrict = (input: AIPageGenerateRequest): string => {
   const safeInput = sanitizePageInput(input);
   const language = resolvePromptLanguage(safeInput.language, safeInput.instruction);
   return [
-    "Strict JSON mode.",
-    "Return one JSON object only. No commentary, markdown, or code fences.",
-    "If all requirements cannot be satisfied together, prioritize valid JSON, renderable nodes, and container-only top-level sections.",
-    "Do not use placeholder copy. Do not use fixed or absolute page-section positioning. Do not echo the prompt itself as visible copy.",
+    "Repair mode.",
+    "Return exactly one valid JSON object and nothing else.",
+    "Do not explain. Do not use markdown. Do not use code fences.",
+    "If content quality and structure conflict, prioritize valid renderable structure.",
+    "Use only container nodes at the top level.",
+    "Use only supported node types and valid button variants.",
+    "Keep the page in normal document flow using flex or grid.",
+    "Use concise user-facing copy. Do not repeat the user's request as visible content.",
     JSON.stringify(
       {
-        instructionSummary: safeInput.instruction,
-        instructionHighlights: buildInstructionHighlights(safeInput.instruction, 4, 64),
-        outputRules: {
-          language,
-          targetSectionCount: resolveSectionTarget(safeInput.length),
+        instructionSummary: compactText(safeInput.instruction, 160),
+        instructionHighlights: buildInstructionHighlights(safeInput.instruction, 4, 56).filter(
+          (item) => !isInstructionalCopy(item),
+        ),
+        requiredKeys: ["title", "nodes", "pageStyle", "reasoningSummary", "safetyFlags"],
+        topLevelNodeType: "container",
+        minimumTopLevelSections: 2,
+        targetSectionCount: resolveSectionTarget(safeInput.length),
+        allowedNodeTypes: SUPPORTED_AI_NODE_TYPES,
+        allowedButtonVariants: ["primary", "outline", "soft"],
+        language,
+        colorHints: {
           primaryColor: safeInput.primaryColor ?? "#3366ff",
-          minimumTopLevelSections: 2,
-          topLevelNodeType: "container",
+          secondaryColor: safeInput.secondaryColor,
+          backgroundColor: safeInput.backgroundColor,
         },
       },
       null,
@@ -1886,9 +1970,11 @@ const buildNodePrompt = (input: AINodeModifyProviderInput): string => {
   const safeInput = sanitizeNodeInput(input);
   return [
     "Task: modify the selected node only.",
-    "Return exactly one valid JSON object. No markdown, commentary, or code fences.",
+    "Return exactly one valid JSON object and nothing else.",
     "Required keys: node, reasoningSummary, safetyFlags.",
     "node.type must match targetNode.type exactly.",
+    "Preserve existing structure unless the latest instruction explicitly requests structural change.",
+    "Do not copy the user's instruction directly into visible node content unless the instruction itself is intended to be shown to end users.",
     "If the conversation is long, prioritize latestInstruction and the most recent messages.",
     JSON.stringify(buildNodePromptPayload(safeInput), null, 2),
   ].join("\n");
@@ -2227,30 +2313,30 @@ export const createOpenAICompatibleProvider = (
   const model = config.model ?? "gpt-4.1-mini";
 
   const pageSystemPrompt = [
-    "You are the JSON page-generation engine for a visual web editor.",
-    "Your only output must be one valid JSON object with no markdown, commentary, code fences, or notes.",
-    "If the request is long, repetitive, or conflicting, compress it internally and keep only the clearest high-priority requirements.",
-    "The response must include title, nodes, pageStyle, reasoningSummary, safetyFlags.",
-    "Top-level nodes must be containers only, and every node must include type, props, style, children.",
-    `Allowed node types: ${SUPPORTED_AI_NODE_TYPES.join(", ")}.`,
-    "Allowed button variants are primary, outline, and soft only.",
-    "The result must be directly renderable, concise, and editable. Do not output HTML strings or placeholder explanations.",
-    "Never use placeholder copy like 标题文本, 按钮, 单行文本, 导航栏, lorem ipsum, or empty text props.",
-    "Never use fixed, absolute, or sticky positioning to place page sections.",
-    "For homepage-style requests, include a usable navigation area, a hero section, clear content cards, and a final CTA.",
+    "You are a page generation engine for a visual web editor.",
+    "Return exactly one JSON object and nothing else.",
+    "The JSON must follow the required schema and be directly renderable.",
+    "Top-level nodes must be container nodes only.",
+    "Use only supported node types and valid props.",
+    "Do not output markdown, code fences, explanations, HTML strings, or placeholder text.",
+    "Do not copy the user's request or editor rules into visible page content.",
+    "Prefer stable normal-flow layouts using flex or grid.",
+    "When requirements conflict, prioritize: valid JSON > renderable structure > editable content > visual coherence.",
   ].join("\n");
 
   const nodeSystemPrompt = [
     "You are the JSON node-modification engine for a visual web editor.",
-    "Your only output must be one valid JSON object with no markdown, commentary, code fences, or notes.",
+    "Return exactly one JSON object and nothing else.",
     "The response must include node, reasoningSummary, safetyFlags.",
     "node.type must remain exactly the same as the target node type.",
     "Unless the user explicitly asks for it, preserve the original structure, sizing, and editable content.",
+    "Do not transform editor instructions into visible UI copy unless the instruction is clearly intended as user-facing text.",
   ].join("\n");
 
   const callModel = async (
     systemContent: string,
     userContent: string,
+    temperature = 0.1,
   ): Promise<unknown> => {
     if (!apiKey) {
       return null;
@@ -2259,7 +2345,7 @@ export const createOpenAICompatibleProvider = (
     const isDeepSeek = baseUrl.includes("deepseek");
     const requestBodyBase: Record<string, unknown> = {
       model: isDeepSeek ? (config.model ?? "deepseek-chat") : model,
-      temperature: 0.1,
+      temperature,
       messages: [
         { role: "system", content: systemContent },
         { role: "user", content: userContent },
@@ -2366,7 +2452,7 @@ export const createOpenAICompatibleProvider = (
   return {
     async generatePageDraft(input) {
       const safeInput = sanitizePageInput(input);
-      let raw = await callModel(pageSystemPrompt, buildPagePrompt(safeInput));
+      let raw = await callModel(pageSystemPrompt, buildPagePrompt(safeInput), 0.15);
       let response = parseAIPageResponseSafe(raw, safeInput);
 
       const isLowQuality = (value: AIPageGenerateResponse) =>
@@ -2379,7 +2465,7 @@ export const createOpenAICompatibleProvider = (
         isLowQuality(response);
 
       if (needsRetry) {
-        raw = await callModel(pageSystemPrompt, buildPagePromptStrict(safeInput));
+        raw = await callModel(pageSystemPrompt, buildPagePromptStrict(safeInput), 0);
         const retryResponse = parseAIPageResponseSafe(raw, safeInput);
         const retryNodes = retryResponse.document.root?.length ?? 0;
         const retryAccepted =
